@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Field } from "@/components/ui/field";
+import { UnitsPreview } from "@/components/ui/units-preview";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -245,25 +247,6 @@ function ruleSummary(r: RateLimitRule): string {
   return `${formatWindow(r.windowSeconds)} \u00B7 max ${cap} ${dim} \u00B7 ${scope} scope${r.active ? "" : " \u00B7 off"}`;
 }
 
-function FormField({
-  id,
-  label,
-  help,
-  children,
-}: {
-  id: string;
-  label: string;
-  help?: string;
-  children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      {children}
-      {help ? <span className="text-[11px] text-muted-foreground">{help}</span> : null}
-    </div>
-  );
-}
 
 export default function PlansPage(): React.ReactElement {
   const { user } = useAuth();
@@ -482,10 +465,10 @@ export default function PlansPage(): React.ReactElement {
           ) : null}
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <FormField id="plan-name" label="Name">
+            <Field id="plan-name" label="Name">
               <Input id="plan-name" type="text" maxLength={120} value={draft.name} required disabled={saving} onChange={(e) => setField("name", e.target.value)} />
-            </FormField>
-            <FormField id="plan-interval" label="Interval">
+            </Field>
+            <Field id="plan-interval" label="Interval">
               <Select value={draft.interval} onValueChange={(v) => setField("interval", v as Interval)} disabled={saving}>
                 <SelectTrigger id="plan-interval">
                   <SelectValue />
@@ -494,40 +477,42 @@ export default function PlansPage(): React.ReactElement {
                   {INTERVALS.map((i) => (<SelectItem key={i} value={i}>{i}</SelectItem>))}
                 </SelectContent>
               </Select>
-            </FormField>
-            <FormField id="plan-interval-count" label="Interval count">
+            </Field>
+            <Field id="plan-interval-count" label="Interval count">
               <Input id="plan-interval-count" type="number" min={1} step={1} value={draft.intervalCount} required disabled={saving} onChange={(e) => setField("intervalCount", e.target.value)} />
-            </FormField>
+            </Field>
           </div>
 
-          <FormField id="plan-description" label="Description">
+          <Field id="plan-description" label="Description">
             <Textarea id="plan-description" maxLength={2000} rows={3} value={draft.description} disabled={saving} onChange={(e) => setField("description", e.target.value)} />
-          </FormField>
+          </Field>
 
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-            <FormField
+            <Field
               id="plan-price-amount"
               label="Price (units)"
-              help="Integer units (USD: 1 unit = $0.01, 100 = $1.00)."
+              tooltip="Integer units charged per billing interval. 100 = $1.00 at USD scale."
             >
               <Input id="plan-price-amount" type="number" min={0} step={1} value={draft.priceAmount} required disabled={saving} onChange={(e) => setField("priceAmount", e.target.value)} />
-            </FormField>
-            <FormField id="plan-price-currency" label="Price currency">
+              <UnitsPreview value={draft.priceAmount} currency={draft.priceCurrency} />
+            </Field>
+            <Field id="plan-price-currency" label="Price currency">
               <Input id="plan-price-currency" type="text" maxLength={3} value={draft.priceCurrency} required disabled={saving} onChange={(e) => setField("priceCurrency", e.target.value.toUpperCase())} />
-            </FormField>
-            <FormField
+            </Field>
+            <Field
               id="plan-credit-amount"
               label="Included credit (units)"
-              help="Same unit scale as price."
+              tooltip="Units of balance granted each interval. Rolls over if unused (subject to plan policy)."
             >
               <Input id="plan-credit-amount" type="number" min={0} step={1} value={draft.includedCreditAmount} required disabled={saving} onChange={(e) => setField("includedCreditAmount", e.target.value)} />
-            </FormField>
-            <FormField id="plan-credit-currency" label="Credit currency">
+              <UnitsPreview value={draft.includedCreditAmount} currency={draft.includedCreditCurrency} />
+            </Field>
+            <Field id="plan-credit-currency" label="Credit currency">
               <Input id="plan-credit-currency" type="text" maxLength={3} value={draft.includedCreditCurrency} required disabled={saving} onChange={(e) => setField("includedCreditCurrency", e.target.value.toUpperCase())} />
-            </FormField>
-            <FormField id="plan-tokens" label="Included tokens">
+            </Field>
+            <Field id="plan-tokens" label="Included tokens">
               <Input id="plan-tokens" type="number" min={0} step={1} value={draft.includedTokens} required disabled={saving} onChange={(e) => setField("includedTokens", e.target.value)} />
-            </FormField>
+            </Field>
           </div>
 
           <div className="flex items-center justify-between border-b border-border pb-1.5">
@@ -577,7 +562,7 @@ export default function PlansPage(): React.ReactElement {
                       </div>
                     </div>
 
-                    <FormField id={`rule-dim-${rule.id}`} label="Dimension">
+                    <Field id={`rule-dim-${rule.id}`} label="Dimension">
                       <Select value={rule.dimension} onValueChange={(v) => updateRule(idx, "dimension", v as Dimension)} disabled={saving}>
                         <SelectTrigger id={`rule-dim-${rule.id}`}>
                           <SelectValue />
@@ -586,11 +571,11 @@ export default function PlansPage(): React.ReactElement {
                           {DIMENSIONS.map((d) => (<SelectItem key={d} value={d}>{d}</SelectItem>))}
                         </SelectContent>
                       </Select>
-                    </FormField>
-                    <FormField id={`rule-cap-${rule.id}`} label={DIMENSION_CAP_LABEL[rule.dimension]}>
-                      <Input type="number" min={1} step={1} value={rule.capValue} required disabled={saving} onChange={(e) => updateRule(idx, "capValue", e.target.value)} />
-                    </FormField>
-                    <FormField id={`rule-scope-${rule.id}`} label="Scope">
+                    </Field>
+                    <Field id={`rule-cap-${rule.id}`} label={DIMENSION_CAP_LABEL[rule.dimension]}>
+                      <Input id={`rule-cap-${rule.id}`} type="number" min={1} step={1} value={rule.capValue} required disabled={saving} onChange={(e) => updateRule(idx, "capValue", e.target.value)} />
+                    </Field>
+                    <Field id={`rule-scope-${rule.id}`} label="Scope" tooltip="Whether the limit applies per-customer, per-key, or per-organization.">
                       <Select value={rule.scope} onValueChange={(v) => updateRule(idx, "scope", v as Scope)} disabled={saving}>
                         <SelectTrigger id={`rule-scope-${rule.id}`}>
                           <SelectValue />
@@ -599,18 +584,18 @@ export default function PlansPage(): React.ReactElement {
                           {SCOPES.map((s) => (<SelectItem key={s} value={s}>{s}</SelectItem>))}
                         </SelectContent>
                       </Select>
-                    </FormField>
+                    </Field>
 
                     {rule.scope === "model" && (
-                      <FormField id={`rule-target-${rule.id}`} label="Model alias">
-                        <Input type="text" maxLength={120} value={rule.scopeTarget} placeholder="model alias" disabled={saving} onChange={(e) => updateRule(idx, "scopeTarget", e.target.value)} />
-                      </FormField>
+                      <Field id={`rule-target-${rule.id}`} label="Model alias">
+                        <Input id={`rule-target-${rule.id}`} type="text" maxLength={120} value={rule.scopeTarget} placeholder="model alias" disabled={saving} onChange={(e) => updateRule(idx, "scopeTarget", e.target.value)} />
+                      </Field>
                     )}
 
                     {rule.dimension === "spend_units" && (
-                      <FormField id={`rule-cur-${rule.id}`} label="Currency">
-                        <Input type="text" maxLength={3} value={rule.currency} disabled={saving} onChange={(e) => updateRule(idx, "currency", e.target.value.toUpperCase())} />
-                      </FormField>
+                      <Field id={`rule-cur-${rule.id}`} label="Currency">
+                        <Input id={`rule-cur-${rule.id}`} type="text" maxLength={3} value={rule.currency} disabled={saving} onChange={(e) => updateRule(idx, "currency", e.target.value.toUpperCase())} />
+                      </Field>
                     )}
 
                     <div className="flex flex-col gap-1.5 sm:col-span-2 lg:col-span-3">

@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Field } from "@/components/ui/field";
+import { UnitsPreview } from "@/components/ui/units-preview";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -199,25 +201,6 @@ async function copyToClipboard(text: string): Promise<boolean> {
   }
 }
 
-function Field({
-  id,
-  label,
-  error,
-  children,
-}: {
-  id: string;
-  label: string;
-  error?: string;
-  children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      {children}
-      {error ? <span className="text-xs text-destructive">{error}</span> : null}
-    </div>
-  );
-}
 
 export default function CustomersPage(): React.ReactElement {
   const { user } = useAuth();
@@ -434,7 +417,7 @@ export default function CustomersPage(): React.ReactElement {
       <Sheet open={drawerOpen} onOpenChange={(o) => (o ? null : closeDrawer())}>
         <SheetContent className="w-full flex-col gap-0 p-0 sm:max-w-[640px]">
           {selected ? (
-            <CustomerDrawer customer={selected} onClose={closeDrawer} onUpdated={(c) => setSelected(c)} onDeleted={closeDrawer} />
+            <CustomerDrawer customer={selected} onClose={closeDrawer} onUpdated={(c) => { setSelected(c); setItems((prev) => prev.map((item) => { if (item._id !== c._id) return item; const { balance: cBal, ...cRest } = c; const merged: Customer = { ...item, ...cRest }; if (cBal) merged.balance = cBal; return merged; })); }} onDeleted={() => { const id = selected._id; closeDrawer(); setItems((prev) => prev.filter((item) => item._id !== id)); setTotal((prev) => Math.max(0, prev - 1)); }} />
           ) : null}
         </SheetContent>
       </Sheet>
@@ -738,8 +721,9 @@ function BalanceForm({ customerId, currency, onClose, onSaved }: BalanceFormProp
       <form className="flex flex-col gap-4" onSubmit={onSubmit}>
         <div className="flex gap-3">
           <div className="flex-1">
-            <Field id="bal-amount" label="Amount (units · USD: 1 unit = $0.01)">
+            <Field id="bal-amount" label="Amount (units)" tooltip="Integer units. 1 unit = $0.01 USD (varies by currency exponent). Positive = credit, negative = debit.">
               <Input id="bal-amount" type="number" step="1" value={amount} required disabled={submitting} onChange={(e) => setAmount(e.target.value)} />
+              <UnitsPreview value={amount} currency={cur} />
             </Field>
           </div>
           <div className="flex-1">
@@ -1238,7 +1222,7 @@ function CustomerFormModal({ mode, customer, onClose, onSaved }: CustomerFormMod
             </Field>
           </div>
           <div className="flex-1">
-            <Field id="cust-extid" label="External ID">
+            <Field id="cust-extid" label="External ID" tooltip="Your system's identifier for this customer. Used for API-based lookups instead of the internal ID.">
               <Input id="cust-extid" type="text" maxLength={128} value={externalId} disabled={submitting} onChange={(e) => setExternalId(e.target.value)} />
             </Field>
           </div>
@@ -1257,7 +1241,7 @@ function CustomerFormModal({ mode, customer, onClose, onSaved }: CustomerFormMod
             </Select>
           </Field>
         ) : null}
-        <Field id="cust-meta" label="Metadata (JSON, optional)">
+        <Field id="cust-meta" label="Metadata (JSON, optional)" tooltip="Arbitrary JSON key-value pairs stored with the customer. Visible in API responses and usage records.">
           <Textarea id="cust-meta" value={metadata} disabled={submitting} onChange={(e) => setMetadata(e.target.value)} />
         </Field>
         <DialogFooter>

@@ -4,7 +4,7 @@ import { hasPermission, useAuth } from "../auth/AuthContext.tsx";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Field } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
@@ -199,25 +199,6 @@ export function parseHttpTimeoutMsInput(
   return { ok: true, value: n };
 }
 
-function Field({
-  id,
-  label,
-  hint,
-  children,
-}: {
-  id: string;
-  label: string;
-  hint?: string | undefined;
-  children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      {children}
-      {hint ? <span className="text-xs text-muted-foreground">{hint}</span> : null}
-    </div>
-  );
-}
 
 export default function ProvidersPage(): React.ReactElement {
   const { user } = useAuth();
@@ -646,7 +627,7 @@ export default function ProvidersPage(): React.ReactElement {
                   placeholder="e.g. OpenAI production"
                 />
               </Field>
-              <Field id="prov-sdk" label="Adapter type">
+              <Field id="prov-sdk" label="Adapter type" tooltip="The integration driver for this provider (e.g. 'openai', 'anthropic'). Determines request/response format.">
                 {adapters.length > 0 ? (
                   <Select value={form.sdkType} onValueChange={(v) => updateField("sdkType", v)} disabled={saving}>
                     <SelectTrigger id="prov-sdk">
@@ -691,7 +672,7 @@ export default function ProvidersPage(): React.ReactElement {
                   placeholder={editing ? "Leave blank to keep current key" : (selectedPreset?.apiKeyPlaceholder ?? "API key")}
                 />
               </Field>
-              <Field id="prov-org" label="Provider org (optional)">
+              <Field id="prov-org" label="Provider org (optional)" tooltip="Some providers (e.g. OpenAI) support organization-level scoping. Leave blank if not applicable.">
                 <Input
                   id="prov-org"
                   type="text"

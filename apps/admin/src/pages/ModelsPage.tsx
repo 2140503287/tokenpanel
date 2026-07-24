@@ -12,6 +12,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Field } from "@/components/ui/field";
+import { UnitsPreview } from "@/components/ui/units-preview";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
@@ -407,25 +409,6 @@ function setField<K extends keyof FormState>(
   setForm((prev) => ({ ...prev, [key]: value }));
 }
 
-function FormField({
-  id,
-  label,
-  help,
-  children,
-}: {
-  id: string;
-  label: string;
-  help?: string;
-  children: React.ReactNode;
-}): React.ReactElement {
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>{label}</Label>
-      {children}
-      {help ? <span className="text-xs text-muted-foreground">{help}</span> : null}
-    </div>
-  );
-}
 
 function ModelEditor({
   form,
@@ -475,7 +458,7 @@ function ModelEditor({
       >
         <SectionTitle>Identity</SectionTitle>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField id="m-alias" label="Alias ID" help="Lowercase slug: a-z, 0-9, _ or -.">
+          <Field id="m-alias" label="Alias ID" hint="Lowercase slug: a-z, 0-9, _ or -." tooltip="The model identifier customers use in API requests (e.g. 'gpt-4o'). Maps to one or more upstream provider entries.">
             <Input
               id="m-alias"
               type="text"
@@ -485,8 +468,8 @@ function ModelEditor({
               required
               disabled={saving}
             />
-          </FormField>
-          <FormField id="m-name" label="Display name">
+          </Field>
+          <Field id="m-name" label="Display name">
             <Input
               id="m-name"
               type="text"
@@ -495,7 +478,7 @@ function ModelEditor({
               required
               disabled={saving}
             />
-          </FormField>
+          </Field>
           <div className="flex flex-col gap-1.5 sm:col-span-2">
             <Label htmlFor="m-desc">Description</Label>
             <Textarea
@@ -519,36 +502,38 @@ function ModelEditor({
 
         <SectionTitle>Limits</SectionTitle>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <FormField id="m-ctx" label="Context window">
+          <Field id="m-ctx" label="Context window">
             <Input id="m-ctx" type="number" min={1} value={form.contextLimit} onChange={(e) => setField(setForm, "contextLimit", e.target.value)} required disabled={saving} />
-          </FormField>
-          <FormField id="m-in" label="Input limit (optional)">
+          </Field>
+          <Field id="m-in" label="Input limit (optional)">
             <Input id="m-in" type="number" min={1} value={form.inputLimit} onChange={(e) => setField(setForm, "inputLimit", e.target.value)} disabled={saving} />
-          </FormField>
-          <FormField id="m-out" label="Output limit (optional)">
+          </Field>
+          <Field id="m-out" label="Output limit (optional)">
             <Input id="m-out" type="number" min={1} value={form.outputLimit} onChange={(e) => setField(setForm, "outputLimit", e.target.value)} disabled={saving} />
-          </FormField>
+          </Field>
         </div>
 
         <SectionTitle>Modalities</SectionTitle>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <FormField id="m-min" label="Input modalities" help="Comma-separated: text, image, audio, video, pdf.">
+          <Field id="m-min" label="Input modalities" hint="Comma-separated: text, image, audio, video, pdf.">
             <Input id="m-min" type="text" value={form.inputModalities} placeholder="text, image" onChange={(e) => setField(setForm, "inputModalities", e.target.value)} disabled={saving} />
-          </FormField>
-          <FormField id="m-mout" label="Output modalities" help="Comma-separated: text, image, audio, video, pdf.">
+          </Field>
+          <Field id="m-mout" label="Output modalities" hint="Comma-separated: text, image, audio, video, pdf.">
             <Input id="m-mout" type="text" value={form.outputModalities} placeholder="text" onChange={(e) => setField(setForm, "outputModalities", e.target.value)} disabled={saving} />
-          </FormField>
+          </Field>
         </div>
 
         <SectionTitle>Pricing &amp; status</SectionTitle>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <FormField id="m-ipm" label="Input price (units/M)" help="Integer units per million tokens (USD: 300 = $3.00/M; 1 unit = $0.01).">
+          <Field id="m-ipm" label="Input price (units/M)" tooltip="Integer units per million input tokens. 300 = $3.00/M at USD scale (1 unit = $0.01).">
             <Input id="m-ipm" type="number" min={0} value={form.inputUnits} onChange={(e) => setField(setForm, "inputUnits", e.target.value)} required disabled={saving} />
-          </FormField>
-          <FormField id="m-opm" label="Output price (units/M)" help="Integer units per million tokens (same scale as input).">
+            <UnitsPreview value={form.inputUnits} currency={form.currency} suffix="/ 1M tokens" />
+          </Field>
+          <Field id="m-opm" label="Output price (units/M)" tooltip="Integer units per million output tokens. Same scale as input price.">
             <Input id="m-opm" type="number" min={0} value={form.outputUnits} onChange={(e) => setField(setForm, "outputUnits", e.target.value)} required disabled={saving} />
-          </FormField>
-          <FormField id="m-status" label="Status">
+            <UnitsPreview value={form.outputUnits} currency={form.currency} suffix="/ 1M tokens" />
+          </Field>
+          <Field id="m-status" label="Status">
             <Select value={form.status} onValueChange={(v) => setField(setForm, "status", v as StatusFilter)} disabled={saving}>
               <SelectTrigger id="m-status">
                 <SelectValue />
@@ -561,20 +546,20 @@ function ModelEditor({
                 <SelectItem value="deprecated">deprecated</SelectItem>
               </SelectContent>
             </Select>
-          </FormField>
-          <FormField id="m-cur" label="Currency">
+          </Field>
+          <Field id="m-cur" label="Currency">
             <Input id="m-cur" type="text" value={form.currency} onChange={(e) => setField(setForm, "currency", e.target.value)} required disabled={saving} />
-          </FormField>
-          <FormField id="m-margin" label="Margin (bps)" help="Basis points over cost if price unset (100 = 1%).">
+          </Field>
+          <Field id="m-margin" label="Margin (bps)" tooltip="Basis points added on top of provider cost. 100 bps = 1% markup. Applied per-entry.">
             <Input id="m-margin" type="number" min={0} value={form.marginBps} onChange={(e) => setField(setForm, "marginBps", e.target.value)} required disabled={saving} />
-          </FormField>
+          </Field>
         </div>
 
         {isCreate ? (
           <>
             <SectionTitle>Primary provider entry</SectionTitle>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <FormField id="m-prov" label="Provider">
+              <Field id="m-prov" label="Provider">
                 <Select value={form.firstProviderId} onValueChange={(v) => setField(setForm, "firstProviderId", v)} disabled={saving}>
                   <SelectTrigger id="m-prov">
                     <SelectValue placeholder="Select provider…" />
@@ -585,10 +570,10 @@ function ModelEditor({
                     ))}
                   </SelectContent>
                 </Select>
-              </FormField>
-              <FormField id="m-up" label="Upstream model id" help="Upstream model id on the chosen provider.">
+              </Field>
+              <Field id="m-up" label="Upstream model id" hint="Upstream model id on the chosen provider.">
                 <Input id="m-up" type="text" value={form.firstUpstreamModelId} placeholder="gpt-4o-mini" onChange={(e) => setField(setForm, "firstUpstreamModelId", e.target.value)} required disabled={saving} />
-              </FormField>
+              </Field>
             </div>
           </>
         ) : null}
@@ -1321,7 +1306,7 @@ function AddEntryForm({ modelId, providers, onAdded }: AddEntryFormProps): React
         </Alert>
       ) : null}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <FormField id="ae-prov" label="Provider">
+        <Field id="ae-prov" label="Provider">
           <Select
             value={state.providerId}
             onValueChange={(v) => setState((s) => ({ ...s, providerId: v, upstreamModelId: "" }))}
@@ -1337,7 +1322,7 @@ function AddEntryForm({ modelId, providers, onAdded }: AddEntryFormProps): React
               ))}
             </SelectContent>
           </Select>
-        </FormField>
+        </Field>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="ae-up">Upstream model id</Label>
           {state.manualMode || catalog.length === 0 ? (
@@ -1364,18 +1349,18 @@ function AddEntryForm({ modelId, providers, onAdded }: AddEntryFormProps): React
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <FormField id="ae-cin" label="Cost input (units/M, optional)">
+        <Field id="ae-cin" label="Cost input (units/M, optional)">
           <Input id="ae-cin" type="number" min={0} value={state.costInput} onChange={(e) => setState((s) => ({ ...s, costInput: e.target.value }))} disabled={submitting} />
-        </FormField>
-        <FormField id="ae-cout" label="Cost output (units/M, optional)">
+        </Field>
+        <Field id="ae-cout" label="Cost output (units/M, optional)">
           <Input id="ae-cout" type="number" min={0} value={state.costOutput} onChange={(e) => setState((s) => ({ ...s, costOutput: e.target.value }))} disabled={submitting} />
-        </FormField>
-        <FormField id="ae-pin" label="Price input (units/M, optional)">
+        </Field>
+        <Field id="ae-pin" label="Price input (units/M, optional)">
           <Input id="ae-pin" type="number" min={0} value={state.priceInput} onChange={(e) => setState((s) => ({ ...s, priceInput: e.target.value }))} disabled={submitting} />
-        </FormField>
-        <FormField id="ae-pout" label="Price output (units/M, optional)">
+        </Field>
+        <Field id="ae-pout" label="Price output (units/M, optional)">
           <Input id="ae-pout" type="number" min={0} value={state.priceOutput} onChange={(e) => setState((s) => ({ ...s, priceOutput: e.target.value }))} disabled={submitting} />
-        </FormField>
+        </Field>
       </div>
 
       <label className="inline-flex cursor-pointer items-center gap-1.5 text-sm">

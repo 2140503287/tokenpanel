@@ -4,7 +4,7 @@ import { useAuth } from "../auth/AuthContext.tsx";
 import { ApiError } from "../api/client.ts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Field } from "@/components/ui/field";
 import { PasswordInput } from "@/components/ui/password-input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2 } from "lucide-react";
@@ -110,25 +110,6 @@ export function validate(form: FirstRunForm): FieldErrors {
   return validateFirstRun(form);
 }
 
-function Field({
-  id,
-  label,
-  error,
-  children,
-}: {
-  id: string;
-  label: string;
-  error?: string | undefined;
-  children: React.ReactNode;
-}): ReactElement {
-  return (
-    <div className="flex flex-col gap-2">
-      <Label htmlFor={id}>{label}</Label>
-      {children}
-      {error ? <span className="text-xs text-destructive">{error}</span> : null}
-    </div>
-  );
-}
 
 export default function SignupPage(): ReactElement {
   const { user, loading, needsSetup, signup, acceptInvite } = useAuth();

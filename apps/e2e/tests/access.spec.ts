@@ -84,11 +84,8 @@ test.describe("access: customers, plans, keys", () => {
     await reliableClick(page.getByRole("button", { name: "Add Rule" }));
     await reliableClick(page.getByRole("button", { name: "1h", exact: true }));
     await selectOption(page, page.locator("[id^='rule-dim-']"), "requests");
-    // The cap input carries no id; reach it via its dimension-dependent label.
-    await page
-      .getByText("max requests", { exact: true })
-      .locator("xpath=following-sibling::input[1]")
-      .fill("500");
+    // The cap input is keyed by the same rule id as its dimension/scope siblings.
+    await page.locator("[id^='rule-cap-']").fill("500");
     await selectOption(page, page.locator("[id^='rule-scope-']"), "customer");
 
     await reliableClick(page.getByRole("button", { name: "Create plan" }));
