@@ -484,7 +484,7 @@ export const removeModelEntry = (input: {
     return updated;
   });
 
-/** Public management model DTO — omits metadata (shared admin/management read). */
+/** Public management model DTO — omits internal fields (entries, marginBps, ids, timestamps). */
 export function toModelCapability(m: ModelDoc) {
   return {
     aliasId: m.aliasId,
@@ -501,6 +501,7 @@ export function toModelCapability(m: ModelDoc) {
     price: m.price,
     currency: m.currency,
     active: m.active,
+    metadata: m.metadata,
   };
 }
 

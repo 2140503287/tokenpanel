@@ -99,9 +99,9 @@ function modelDoc(over: Partial<ModelDoc> = {}): ModelDoc {
   };
 }
 
-test("toModelCapability: omits metadata from management model DTO", () => {
+test("toModelCapability: includes metadata in management model DTO", () => {
   const out = toModelCapability(modelDoc());
-  expect("metadata" in out).toBe(false);
+  expect(out.metadata).toEqual({ tier: "gold", internal: "secret-ish" });
   expect(out.aliasId).toBe("my-gpt");
   expect(out.displayName).toBe("My GPT");
   expect(out.active).toBe(true);
