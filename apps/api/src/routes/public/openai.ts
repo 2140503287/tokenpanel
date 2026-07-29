@@ -18,6 +18,7 @@ import {
   type ChatContext,
 } from "../../lib/v1-chat-context.ts";
 import type { ChatRequest, ChatMessage, ContentPart } from "../../providers/index.ts";
+import { toOpenAIFinishReason, toOpenAIToolCallDeltas } from "../../providers/index.ts";
 import {
   applyDoneUsage,
   classifyGenerationFailure,
@@ -92,33 +93,95 @@ publicOpenAI.get("/v1/models", async (c) => {
  * inside the key's org. Ignored for customer keys. Stripped before upstream.
  */
 export function translateMessage(m: OpenAIMessage): ChatMessage {
-  let content: string | ContentPart[];
-  if (typeof m.content === "string") {
+  let content: string | ContentPart[] | null;
+  if (m.content === null || m.content === undefined) {
+    // Spec: assistant content is nullable; null is canonical tool-call turns.
+    content = null;
+  } else if (typeof m.content === "string") {
     content = m.content;
   } else {
-    content = m.content.map((part) => {
-      if (part.type === "text") {
-        return { type: "text", text: part.text ?? "" };
+    content = m.content.flatMap((part): ContentPart[] => {
+      switch (part.type) {
+        case "text":
+          return [{ type: "text", text: part.text ?? "" }];
+        case "image_url":
+          return part.image_url
+            ? [
+                {
+                  type: "image_url",
+                  imageUrl: {
+                    url: part.image_url.url,
+                    ...(part.image_url.detail !== undefined ? { detail: part.image_url.detail } : {}),
+                  },
+                },
+              ]
+            : [];
+        case "input_audio":
+          return part.input_audio
+            ? [
+                {
+                  type: "input_audio",
+                  inputData: { data: part.input_audio.data, format: part.input_audio.format },
+                },
+              ]
+            : [];
+        case "file":
+          return part.file
+            ? [
+                {
+                  type: "file",
+                  file: {
+                    ...(part.file.file_id !== undefined ? { fileId: part.file.file_id } : {}),
+                    ...(part.file.file_data !== undefined ? { fileData: part.file.file_data } : {}),
+                    ...(part.file.filename !== undefined ? { filename: part.file.filename } : {}),
+                  },
+                },
+              ]
+            : [];
+        default:
+          return [];
       }
-      if (part.type === "image_url") {
-        return { type: "image_url", imageUrl: part.image_url ?? { url: "" } };
-      }
-      return { type: "input_audio", inputData: part.input_audio?.data ?? "" };
     });
   }
   return {
     role: m.role,
     content,
+    name: m.name,
+    refusal: m.refusal,
+    audio: m.audio,
     toolCallId: m.tool_call_id,
     toolCalls: m.tool_calls ? [...m.tool_calls] : undefined,
   };
 }
 
-export function formatOpenAIError(code: string, message: string, extra?: Record<string, unknown>) {
+/** OpenAI error `type` per the API reference (status-driven). */
+function openAIErrorTypeForStatus(status: number, code: string): string {
+  switch (status) {
+    case 401:
+      return "authentication_error";
+    case 403:
+      return "permission_error";
+    case 404:
+      return "not_found_error";
+    case 429:
+      return "rate_limit_error";
+    default:
+      if (status >= 500) return "api_error";
+      if (code === "rate_limited") return "rate_limit_error";
+      return "invalid_request_error";
+  }
+}
+
+export function formatOpenAIError(
+  code: string,
+  message: string,
+  extra?: Record<string, unknown>,
+  status?: number,
+) {
   return {
     error: {
       message,
-      type: code === "rate_limited" ? "rate_limit_error" : code === "insufficient_balance" ? "billing_error" : "invalid_request_error",
+      type: openAIErrorTypeForStatus(status ?? 400, code),
       code,
       ...(extra ?? {}),
     },
@@ -130,7 +193,7 @@ function mapOpenAIRouteError(err: unknown): RenderedHttpError | null {
   if (err instanceof V1ChatError) {
     return {
       status: err.status,
-      body: formatOpenAIError(err.code, err.message),
+      body: formatOpenAIError(err.code, err.message, undefined, err.status),
       headers: {},
     };
   }
@@ -182,7 +245,7 @@ function resolveModelAndRules(params: {
   );
 }
 
-function buildOpenAIChatRequest(
+export function buildOpenAIChatRequest(
   body: typeof OpenAIChatCompletionBody.Type,
   stream: boolean,
 ): ChatRequest {
@@ -190,9 +253,9 @@ function buildOpenAIChatRequest(
     model: body.model,
     messages: body.messages.map(translateMessage),
     stream,
-    temperature: body.temperature,
-    maxTokens: body.max_tokens ?? body.max_completion_tokens,
-    topP: body.top_p,
+    temperature: body.temperature ?? undefined,
+    maxTokens: body.max_tokens ?? body.max_completion_tokens ?? undefined,
+    topP: body.top_p ?? undefined,
     tools: body.tools ? [...body.tools] : undefined,
     toolChoice: body.tool_choice,
     stop: Array.isArray(body.stop)
@@ -202,10 +265,40 @@ function buildOpenAIChatRequest(
         : undefined,
     responseFormat: body.response_format,
     reasoning: body.reasoning_effort ? { effort: body.reasoning_effort } : undefined,
+    extra: pickOpenAIExtras(body),
   };
 }
 
-function openAICompletionJson(
+/**
+ * Forward spec params the shared ChatRequest does not model. Adapters merge
+ * `extra` into the upstream body (reasoning models still filter penalties).
+ */
+function pickOpenAIExtras(
+  body: typeof OpenAIChatCompletionBody.Type,
+): Record<string, unknown> | undefined {
+  const extra: Record<string, unknown> = {};
+  if (body.n !== undefined) extra.n = body.n;
+  if (body.frequency_penalty !== undefined) extra.frequency_penalty = body.frequency_penalty;
+  if (body.presence_penalty !== undefined) extra.presence_penalty = body.presence_penalty;
+  if (body.logit_bias !== undefined) extra.logit_bias = body.logit_bias;
+  if (body.logprobs !== undefined) extra.logprobs = body.logprobs;
+  if (body.top_logprobs !== undefined) extra.top_logprobs = body.top_logprobs;
+  if (body.seed !== undefined) extra.seed = body.seed;
+  if (body.parallel_tool_calls !== undefined) extra.parallel_tool_calls = body.parallel_tool_calls;
+  if (body.store !== undefined) extra.store = body.store;
+  if (body.metadata !== undefined) extra.metadata = body.metadata;
+  if (body.user !== undefined) extra.user = body.user;
+  if (body.verbosity !== undefined) extra.verbosity = body.verbosity;
+  if (body.modalities !== undefined) extra.modalities = body.modalities;
+  if (body.web_search_options !== undefined) extra.web_search_options = body.web_search_options;
+  if (body.prediction !== undefined) extra.prediction = body.prediction;
+  if (body.audio !== undefined) extra.audio = body.audio;
+  if (body.moderation !== undefined) extra.moderation = body.moderation;
+  if (body.service_tier !== undefined) extra.service_tier = body.service_tier;
+  return Object.keys(extra).length > 0 ? extra : undefined;
+}
+
+export function openAICompletionJson(
   result: GenerationCompleteResult,
   modelAlias: string,
 ) {
@@ -219,17 +312,21 @@ function openAICompletionJson(
       index: ch.index,
       message: {
         role: ch.message.role,
-        content: ch.message.content,
-        tool_calls: ch.message.toolCalls,
+        // Spec: content is `string | null`; null on tool-call-only turns.
+        content: ch.message.content ?? null,
+        refusal: ch.message.refusal ?? null,
+        ...(ch.message.toolCalls !== undefined ? { tool_calls: ch.message.toolCalls } : {}),
       },
-      finish_reason: ch.finishReason,
+      finish_reason: toOpenAIFinishReason(ch.finishReason),
     })),
     usage: {
       prompt_tokens: r.usage.promptTokens,
       completion_tokens: r.usage.completionTokens,
       total_tokens: r.usage.totalTokens,
       ...(r.usage.reasoningTokens !== undefined
-        ? { reasoning_tokens: r.usage.reasoningTokens }
+        ? {
+            completion_tokens_details: { reasoning_tokens: r.usage.reasoningTokens },
+          }
         : {}),
       ...(r.usage.cacheReadTokens !== undefined
         ? { prompt_tokens_details: { cached_tokens: r.usage.cacheReadTokens } }
@@ -277,7 +374,7 @@ publicOpenAI.post("/v1/chat/completions", async (c) => {
       customerEmail: body.customerEmail,
     });
     const request = buildOpenAIChatRequest(body, stream);
-    const maxCompletion = body.max_tokens ?? body.max_completion_tokens;
+    const maxCompletion = body.max_tokens ?? body.max_completion_tokens ?? undefined;
     const preflight = yield* resolveModelAndRules({
       orgId,
       ctx,
@@ -312,9 +409,9 @@ publicOpenAI.post("/v1/chat/completions", async (c) => {
           protocol: "openai",
           reservation: p.reservation,
           limitReservation: p.limitReservation,
-          reservedUnits: p.reservation?.reservedUnits ?? 0,
+          reservedMicros: p.reservation?.reservedMicros ?? 0,
           startedAtMs: Date.now(),
-          priceUnitsOverride:
+          priceMicrosOverride:
             p.ctx.kind === "management_internal" ? 0 : undefined,
           signal: abortSignal,
         });
@@ -347,10 +444,10 @@ publicOpenAI.post("/v1/chat/completions", async (c) => {
 
   const { ctx, request, model, rules, reservation, limitReservation } =
     prepExit.value;
-  const reservedUnits = reservation?.reservedUnits ?? 0;
+  const reservedMicros = reservation?.reservedMicros ?? 0;
   const actor = actorForChatContext(ctx);
   const start = Date.now();
-  const priceUnitsOverride =
+  const priceMicrosOverride =
     ctx.kind === "management_internal" ? 0 : undefined;
 
   c.header("Content-Type", "text/event-stream");
@@ -370,9 +467,9 @@ publicOpenAI.post("/v1/chat/completions", async (c) => {
     protocol: "openai",
     reservation,
     limitReservation,
-    reservedUnits,
+    reservedMicros,
     startedAtMs: start,
-    priceUnitsOverride,
+    priceMicrosOverride,
     signal: abortSignal,
   });
 
@@ -381,6 +478,7 @@ publicOpenAI.post("/v1/chat/completions", async (c) => {
   const usage = emptyStreamUsage("openai");
   let terminalErrorEmitted = false;
   let clientDisconnected = false;
+  let roleSent = false;
 
   const onAbort = () => {
     clientDisconnected = true;
@@ -449,12 +547,19 @@ publicOpenAI.post("/v1/chat/completions", async (c) => {
           session.noteChunk(entry.id, chunk);
           if (chunk.type === "delta") {
             const delta: Record<string, unknown> = {};
+            if (!roleSent) {
+              delta.role = "assistant";
+              roleSent = true;
+            }
             if (chunk.delta?.content !== undefined)
               delta.content = chunk.delta.content;
             if (chunk.delta?.reasoning !== undefined)
               delta.reasoning_content = chunk.delta.reasoning;
-            if (chunk.delta?.toolCalls !== undefined)
-              delta.tool_calls = chunk.delta.toolCalls;
+            if (chunk.delta?.toolCalls !== undefined) {
+              delta.tool_calls = toOpenAIToolCallDeltas(
+                chunk.delta.toolCalls as Record<string, unknown>[],
+              );
+            }
             enqueue({
               id,
               object: "chat.completion.chunk",
@@ -485,7 +590,7 @@ publicOpenAI.post("/v1/chat/completions", async (c) => {
             created,
             model: body.model,
             choices: [
-              { index: 0, delta: {}, finish_reason: usage.finishReason },
+              { index: 0, delta: {}, finish_reason: toOpenAIFinishReason(usage.finishReason) },
             ],
           });
           if (usage.promptTokens > 0 || usage.completionTokens > 0) {
@@ -504,7 +609,11 @@ publicOpenAI.post("/v1/chat/completions", async (c) => {
                 completion_tokens: usage.completionTokens,
                 total_tokens: total,
                 ...(usage.reasoningTokens > 0
-                  ? { reasoning_tokens: usage.reasoningTokens }
+                  ? {
+                      completion_tokens_details: {
+                        reasoning_tokens: usage.reasoningTokens,
+                      },
+                    }
                   : {}),
                 ...(usage.cacheReadTokens > 0
                   ? {

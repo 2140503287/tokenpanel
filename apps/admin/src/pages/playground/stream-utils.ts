@@ -1,5 +1,4 @@
 /** Pure playground stream/event helpers (domain split). */
-import { currencyExponent } from "../../utils/format.ts";
 
 export type StreamPanelState = {
   content: string;
@@ -11,7 +10,7 @@ export type StreamPanelState = {
     upstreamModelId: string;
     sdkType: string;
   } | null;
-  cost: { costUnits: number; priceUnits: number; currency: string } | null;
+  cost: { costMicros: number; priceMicros: number; currency: string } | null;
   billed: boolean;
   usage: {
     promptTokens: number;
@@ -29,7 +28,7 @@ export function applyEventToState(
   if (obj === "playground.meta") return cur;
   if (obj === "playground.cost") {
     const cost = evt.cost as
-      | { costUnits: number; priceUnits: number; currency: string }
+      | { costMicros: number; priceMicros: number; currency: string }
       | undefined;
     const provider = evt.provider as StreamPanelState["provider"] | undefined;
     const billed = evt.billed as boolean | undefined;
@@ -52,7 +51,7 @@ export function applyEventToState(
           prompt_tokens: number;
           completion_tokens: number;
           total_tokens: number;
-          reasoning_tokens?: number;
+          completion_tokens_details?: { reasoning_tokens?: number };
         }
       | undefined;
     let content = cur.content;
@@ -74,7 +73,7 @@ export function applyEventToState(
             promptTokens: usage.prompt_tokens,
             completionTokens: usage.completion_tokens,
             totalTokens: usage.total_tokens,
-            reasoningTokens: usage.reasoning_tokens,
+            reasoningTokens: usage.completion_tokens_details?.reasoning_tokens,
           }
         : cur.usage,
     };
@@ -90,13 +89,6 @@ export function applyEventToState(
 export function round(n: number, dp: number): number {
   const f = 10 ** dp;
   return Math.round(n * f) / f;
-}
-
-export function formatUnits(units: number, currency: string): string {
-  // High-precision estimate display still respects ISO exponent (not /100).
-  const exp = currencyExponent(currency);
-  const major = units / 10 ** exp;
-  return `${currency.toUpperCase()} ${major.toFixed(Math.max(exp, 4))}`;
 }
 
 export async function safeErr(res: Response): Promise<string> {

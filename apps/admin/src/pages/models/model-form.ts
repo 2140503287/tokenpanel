@@ -8,6 +8,9 @@ import {
   MODEL_METADATA_POLICY,
   isValidModelMetadataKey,
   normalizeMetadataValueNewlines,
+  parseMajorToMicros,
+  formatMicrosToMajor,
+  minorToMicros,
   type ModelModality,
   type ModelStatus,
 } from "@tokenpanel/contracts";
@@ -17,13 +20,13 @@ type Modality = ModelModality;
 type Status = ModelStatus;
 
 export interface TokenPriceSchedule {
-  inputUnitsPerMillion: number;
-  outputUnitsPerMillion: number;
-  reasoningUnitsPerMillion?: number;
-  cacheReadUnitsPerMillion?: number;
-  cacheWriteUnitsPerMillion?: number;
-  inputAudioUnitsPerMillion?: number;
-  outputAudioUnitsPerMillion?: number;
+  inputMicrosPerMillion: number;
+  outputMicrosPerMillion: number;
+  reasoningMicrosPerMillion?: number;
+  cacheReadMicrosPerMillion?: number;
+  cacheWriteMicrosPerMillion?: number;
+  inputAudioMicrosPerMillion?: number;
+  outputAudioMicrosPerMillion?: number;
 }
 
 export interface ModelEntry {
@@ -273,6 +276,30 @@ export function toNonNegInt(v: string): number | undefined {
   return n >= 0 ? n : undefined;
 }
 
+/**
+ * Compute a retail price (major-unit string) from a wholesale cost and a margin
+ * in basis points: price = cost × (1 + bps/10000). Integer-exact in micros —
+ * the markup is ceil'd so the margin is never undercut. Returns undefined when
+ * the cost is blank or either value fails to parse (caller keeps the field as-is).
+ */
+export function priceFromCostMargin(
+  costMajor: string,
+  marginBps: string,
+): string | undefined {
+  const cost = costMajor.trim();
+  if (cost === "") return undefined;
+  const bps = toNonNegInt(marginBps);
+  if (bps === undefined) return undefined;
+  let costMicros: number;
+  try {
+    costMicros = parseMajorToMicros(cost);
+  } catch {
+    return undefined;
+  }
+  const markup = Math.ceil((costMicros * bps) / 10_000);
+  return formatMicrosToMajor(costMicros + markup);
+}
+
 export interface FormState {
   aliasId: string;
   displayName: string;
@@ -290,6 +317,20 @@ export interface FormState {
   status: StatusFilter;
   inputUnits: string;
   outputUnits: string;
+  /** Optional per-million rates; "" = unset (omitted from the schedule). */
+  reasoningUnits: string;
+  cacheReadUnits: string;
+  cacheWriteUnits: string;
+  inputAudioUnits: string;
+  outputAudioUnits: string;
+  /** Cost schedule (what org pays); "" = unset. */
+  costInputUnits: string;
+  costOutputUnits: string;
+  costReasoningUnits: string;
+  costCacheReadUnits: string;
+  costCacheWriteUnits: string;
+  costInputAudioUnits: string;
+  costOutputAudioUnits: string;
   currency: string;
   marginBps: string;
   firstProviderId: string;
@@ -323,6 +364,18 @@ export function emptyForm(): FormState {
     status: "none",
     inputUnits: "0",
     outputUnits: "0",
+    reasoningUnits: "",
+    cacheReadUnits: "",
+    cacheWriteUnits: "",
+    inputAudioUnits: "",
+    outputAudioUnits: "",
+    costInputUnits: "",
+    costOutputUnits: "",
+    costReasoningUnits: "",
+    costCacheReadUnits: "",
+    costCacheWriteUnits: "",
+    costInputAudioUnits: "",
+    costOutputAudioUnits: "",
     currency: "USD",
     marginBps: "0",
     firstProviderId: "",
@@ -335,6 +388,7 @@ export function emptyForm(): FormState {
 
 export function formFromModel(m: Model): FormState {
   const mapped = metadataToRows(m.metadata);
+  const primaryCost = m.entries[0]?.cost;
   return {
     aliasId: m.aliasId,
     displayName: m.displayName,
@@ -350,8 +404,20 @@ export function formFromModel(m: Model): FormState {
     inputModalities: modalitiesToText(m.modalities.input),
     outputModalities: modalitiesToText(m.modalities.output),
     status: m.status ?? "none",
-    inputUnits: String(m.price.inputUnitsPerMillion),
-    outputUnits: String(m.price.outputUnitsPerMillion),
+    inputUnits: formatMicrosToMajor(m.price.inputMicrosPerMillion),
+    outputUnits: formatMicrosToMajor(m.price.outputMicrosPerMillion),
+    reasoningUnits: m.price.reasoningMicrosPerMillion !== undefined ? formatMicrosToMajor(m.price.reasoningMicrosPerMillion) : "",
+    cacheReadUnits: m.price.cacheReadMicrosPerMillion !== undefined ? formatMicrosToMajor(m.price.cacheReadMicrosPerMillion) : "",
+    cacheWriteUnits: m.price.cacheWriteMicrosPerMillion !== undefined ? formatMicrosToMajor(m.price.cacheWriteMicrosPerMillion) : "",
+    inputAudioUnits: m.price.inputAudioMicrosPerMillion !== undefined ? formatMicrosToMajor(m.price.inputAudioMicrosPerMillion) : "",
+    outputAudioUnits: m.price.outputAudioMicrosPerMillion !== undefined ? formatMicrosToMajor(m.price.outputAudioMicrosPerMillion) : "",
+    costInputUnits: primaryCost ? formatMicrosToMajor(primaryCost.inputMicrosPerMillion) : "",
+    costOutputUnits: primaryCost ? formatMicrosToMajor(primaryCost.outputMicrosPerMillion) : "",
+    costReasoningUnits: primaryCost?.reasoningMicrosPerMillion !== undefined ? formatMicrosToMajor(primaryCost.reasoningMicrosPerMillion) : "",
+    costCacheReadUnits: primaryCost?.cacheReadMicrosPerMillion !== undefined ? formatMicrosToMajor(primaryCost.cacheReadMicrosPerMillion) : "",
+    costCacheWriteUnits: primaryCost?.cacheWriteMicrosPerMillion !== undefined ? formatMicrosToMajor(primaryCost.cacheWriteMicrosPerMillion) : "",
+    costInputAudioUnits: primaryCost?.inputAudioMicrosPerMillion !== undefined ? formatMicrosToMajor(primaryCost.inputAudioMicrosPerMillion) : "",
+    costOutputAudioUnits: primaryCost?.outputAudioMicrosPerMillion !== undefined ? formatMicrosToMajor(primaryCost.outputAudioMicrosPerMillion) : "",
     currency: m.currency,
     marginBps: String(m.marginBps),
     firstProviderId: "",
@@ -393,14 +459,23 @@ export function formFromFetched(m: FetchedModel, base: FormState): FormState {
     inputModalities: m.modalities.input.length > 0 ? modalitiesToText(m.modalities.input as Modality[]) : base.inputModalities,
     outputModalities: m.modalities.output.length > 0 ? modalitiesToText(m.modalities.output as Modality[]) : base.outputModalities,
     status: m.status ?? "none",
-    inputUnits: m.cost ? String(m.cost.inputUnitsPerMillion) : base.inputUnits,
-    outputUnits: m.cost ? String(m.cost.outputUnitsPerMillion) : base.outputUnits,
+    costInputUnits: m.cost ? formatMicrosToMajor(minorToMicros(m.cost.inputUnitsPerMillion, 2)) : base.costInputUnits,
+    costOutputUnits: m.cost ? formatMicrosToMajor(minorToMicros(m.cost.outputUnitsPerMillion, 2)) : base.costOutputUnits,
+    costReasoningUnits: m.cost?.reasoningUnitsPerMillion !== undefined ? formatMicrosToMajor(minorToMicros(m.cost.reasoningUnitsPerMillion, 2)) : base.costReasoningUnits,
+    costCacheReadUnits: m.cost?.cacheReadUnitsPerMillion !== undefined ? formatMicrosToMajor(minorToMicros(m.cost.cacheReadUnitsPerMillion, 2)) : base.costCacheReadUnits,
+    costCacheWriteUnits: m.cost?.cacheWriteUnitsPerMillion !== undefined ? formatMicrosToMajor(minorToMicros(m.cost.cacheWriteUnitsPerMillion, 2)) : base.costCacheWriteUnits,
+    costInputAudioUnits: m.cost?.inputAudioUnitsPerMillion !== undefined ? formatMicrosToMajor(minorToMicros(m.cost.inputAudioUnitsPerMillion, 2)) : base.costInputAudioUnits,
+    costOutputAudioUnits: m.cost?.outputAudioUnitsPerMillion !== undefined ? formatMicrosToMajor(minorToMicros(m.cost.outputAudioUnitsPerMillion, 2)) : base.costOutputAudioUnits,
     firstUpstreamModelId: m.upstreamModelId,
     // metadataRows preserved via ...base
   };
 }
 
-export function buildModelPayload(f: FormState, isCreate: boolean):
+export function buildModelPayload(
+  f: FormState,
+  isCreate: boolean,
+  existingModel?: Model | undefined,
+):
   | { ok: true; payload: Record<string, unknown> }
   | { ok: false; error: string } {
   const aliasId = f.aliasId.trim();
@@ -413,10 +488,14 @@ export function buildModelPayload(f: FormState, isCreate: boolean):
 
   const context = toPositiveInt(f.contextLimit);
 
-  const inputUnits = toNonNegInt(f.inputUnits);
-  const outputUnits = toNonNegInt(f.outputUnits);
-  if (inputUnits === undefined || outputUnits === undefined)
-    return { ok: false, error: "Price must be non-negative integers." };
+  let inputMicros: number;
+  let outputMicros: number;
+  try {
+    inputMicros = parseMajorToMicros(f.inputUnits);
+    outputMicros = parseMajorToMicros(f.outputUnits);
+  } catch {
+    return { ok: false, error: "Price must be non-negative decimals (≤6 dp)." };
+  }
 
   const marginBps = toNonNegInt(f.marginBps);
   if (marginBps === undefined)
@@ -439,9 +518,64 @@ export function buildModelPayload(f: FormState, isCreate: boolean):
   const status = f.status === "none" ? undefined : f.status;
 
   const price: TokenPriceSchedule = {
-    inputUnitsPerMillion: inputUnits,
-    outputUnitsPerMillion: outputUnits,
+    inputMicrosPerMillion: inputMicros,
+    outputMicrosPerMillion: outputMicros,
   };
+  // Optional rates: "" omits the field; non-empty must parse to micros.
+  const optionalRates: Array<[keyof TokenPriceSchedule, string]> = [
+    ["reasoningMicrosPerMillion", f.reasoningUnits],
+    ["cacheReadMicrosPerMillion", f.cacheReadUnits],
+    ["cacheWriteMicrosPerMillion", f.cacheWriteUnits],
+    ["inputAudioMicrosPerMillion", f.inputAudioUnits],
+    ["outputAudioMicrosPerMillion", f.outputAudioUnits],
+  ];
+  for (const [key, raw] of optionalRates) {
+    if (raw.trim() === "") continue;
+    try {
+      price[key] = parseMajorToMicros(raw);
+    } catch {
+      return { ok: false, error: "Optional price rates must be non-negative decimals (≤6 dp)." };
+    }
+  }
+
+  // Cost schedule (what org pays upstream). All blank = no cost → costMicros=0.
+  let costSchedule: TokenPriceSchedule | undefined;
+  const costInput = f.costInputUnits.trim();
+  const costOutput = f.costOutputUnits.trim();
+  if (costInput !== "" || costOutput !== "") {
+    let cIn: number;
+    let cOut: number;
+    try {
+      cIn = parseMajorToMicros(costInput === "" ? "0" : costInput);
+      cOut = parseMajorToMicros(costOutput === "" ? "0" : costOutput);
+    } catch {
+      return { ok: false, error: "Cost input/output must be non-negative decimals (≤6 dp)." };
+    }
+    costSchedule = { inputMicrosPerMillion: cIn, outputMicrosPerMillion: cOut };
+    const optionalCost: Array<[keyof TokenPriceSchedule, string]> = [
+      ["reasoningMicrosPerMillion", f.costReasoningUnits],
+      ["cacheReadMicrosPerMillion", f.costCacheReadUnits],
+      ["cacheWriteMicrosPerMillion", f.costCacheWriteUnits],
+      ["inputAudioMicrosPerMillion", f.costInputAudioUnits],
+      ["outputAudioMicrosPerMillion", f.costOutputAudioUnits],
+    ];
+    for (const [key, raw] of optionalCost) {
+      if (raw.trim() === "") continue;
+      try {
+        costSchedule[key] = parseMajorToMicros(raw);
+      } catch {
+        return { ok: false, error: "Optional cost rates must be non-negative decimals (≤6 dp)." };
+      }
+    }
+  } else if (
+    f.costReasoningUnits.trim() !== "" ||
+    f.costCacheReadUnits.trim() !== "" ||
+    f.costCacheWriteUnits.trim() !== "" ||
+    f.costInputAudioUnits.trim() !== "" ||
+    f.costOutputAudioUnits.trim() !== ""
+  ) {
+    return { ok: false, error: "Set cost input/output before adding optional cost rates." };
+  }
 
   const payload: Record<string, unknown> = {
     aliasId,
@@ -485,14 +619,33 @@ export function buildModelPayload(f: FormState, isCreate: boolean):
     if (!providerId) return { ok: false, error: "Select a provider for the primary entry." };
     if (!upstreamModelId)
       return { ok: false, error: "Enter an upstream model id for the primary entry." };
-    payload.entries = [
-      {
-        providerId,
-        upstreamModelId,
-        priority: 0,
-        active: true,
-      },
-    ];
+    const primaryEntry: Record<string, unknown> = {
+      providerId,
+      upstreamModelId,
+      priority: 0,
+      active: true,
+    };
+    if (costSchedule !== undefined) primaryEntry.cost = costSchedule;
+    payload.entries = [primaryEntry];
+  } else if (existingModel !== undefined) {
+    // Merge cost into the primary (first) entry; preserve all other entries.
+    const entries = existingModel.entries.map((e, i) => {
+      const entry: Record<string, unknown> = {
+        id: e.id,
+        providerId: e.providerId,
+        upstreamModelId: e.upstreamModelId,
+        priority: e.priority,
+        active: e.active,
+      };
+      if (i === 0) {
+        if (costSchedule !== undefined) entry.cost = costSchedule;
+      } else if (e.cost !== undefined) {
+        entry.cost = e.cost;
+      }
+      if (e.price !== undefined) entry.price = e.price;
+      return entry;
+    });
+    payload.entries = entries;
   }
 
   return { ok: true, payload };

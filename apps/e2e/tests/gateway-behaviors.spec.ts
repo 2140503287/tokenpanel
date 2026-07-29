@@ -53,7 +53,7 @@ test.describe("gateway behaviors: billing / rate-limit / fallback / protocols", 
     const auth = { Authorization: `Bearer ${jwt}` };
 
     // Resolve the pipeline customer's id + balance via the admin API (exact
-    // integer units — the UI's formatMoney rounds to cents and would hide a
+    // integer micros — the UI's formatMoney rounds to cents and would hide a
     // sub-cent debit).
     const list = await request.get(
       `/admin/customers?q=${encodeURIComponent(pipeline!.customerName)}`,
@@ -63,11 +63,11 @@ test.describe("gateway behaviors: billing / rate-limit / fallback / protocols", 
     const items = (await list.json()).items as Array<{
       _id: string;
       name: string;
-      balance: { amountUnits: number; currency: string };
+      balance: { amountMicros: number; currency: string };
     }>;
     const customer = items.find((c) => c.name === pipeline!.customerName);
     expect(customer, "pipeline customer exists").toBeTruthy();
-    const before = customer!.balance.amountUnits;
+    const beforeMicros = customer!.balance.amountMicros;
 
     const res = await request.post("/v1/chat/completions", {
       headers: { Authorization: `Bearer ${pipeline!.apiKey}` },
@@ -85,12 +85,13 @@ test.describe("gateway behaviors: billing / rate-limit / fallback / protocols", 
       headers: auth,
     });
     expect(after.status()).toBe(200);
-    const afterUnits = (await after.json()).balance.amountUnits as number;
+    const afterMicros = (await after.json()).balance.amountMicros as number;
 
-    // Price schedule: input 1000/M × 1000 prompt = 1 unit, output 2000/M × 2000
-    // completion = 4 units → exactly 5 minor units per call. Asserting the exact
+    // Price schedule: input 10,000,000 micros/M × 1000 prompt / 1,000,000 =
+    // 10,000 micros, output 20,000,000 micros/M × 2000 completion / 1,000,000 =
+    // 40,000 micros → exactly 50,000 micros ($0.05) per call. Asserting the exact
     // delta catches both "not billed" and "mis-billed" regressions.
-    expect(before - afterUnits, "balance debited exactly 5 units").toBe(5);
+    expect(beforeMicros - afterMicros, "balance debited exactly 50,000 micros ($0.05)").toBe(50_000);
   });
 
   test("a plan rate-limit rule returns 429 once the request cap is hit", async ({
@@ -105,7 +106,7 @@ test.describe("gateway behaviors: billing / rate-limit / fallback / protocols", 
       headers: auth,
       data: {
         name: "RL Requests Cap2",
-        price: { amountUnits: 0, currency: "USD" },
+        price: { amountMicros: 0, currency: "USD" },
         interval: "month",
         rateLimits: [
           { windowSeconds: 3600, dimension: "requests", capValue: 2, scope: "customer" },
@@ -126,7 +127,7 @@ test.describe("gateway behaviors: billing / rate-limit / fallback / protocols", 
 
     const credit = await request.post(`/admin/customers/${customerId}/balance`, {
       headers: auth,
-      data: { amountUnits: 1_000_000, currency: "USD", reason: "topup" },
+      data: { amountMicros: 1_000_000, currency: "USD", reason: "topup" },
     });
     expect(credit.status(), "credit applied").toBeLessThan(300);
 

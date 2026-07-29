@@ -33,6 +33,15 @@ export function rateLimitStreamScope(
 }
 
 /**
+ * Normalize dimension for stream identity. `spend_units` and `spend_micros`
+ * are the same money stream across the units → micros migration (caps are
+ * scaled in place; only the unit label changes), so they share one key.
+ */
+export function rateLimitStreamDimension(dimension: string): string {
+  return dimension === "spend_units" ? "spend_micros" : dimension;
+}
+
+/**
  * Stable key for the counter stream a rule would write to (config-time).
  * Does not include capValue or rule id — those are not stream identity.
  */
@@ -42,7 +51,7 @@ export function rateLimitStreamKey(rule: RateLimitStreamFields): string {
     scope === "customer"
       ? ""
       : (rule.scopeTarget ?? "").trim().toLowerCase();
-  return `${rule.dimension}\0${rule.windowSeconds}\0${scope}\0${target}`;
+  return `${rateLimitStreamDimension(rule.dimension)}\0${rule.windowSeconds}\0${scope}\0${target}`;
 }
 
 export type DuplicateRateLimitStream = {

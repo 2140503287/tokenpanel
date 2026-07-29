@@ -78,7 +78,7 @@ export function computeCharges(params: {
   model: ModelDoc;
   usage: ChatResponse["usage"];
   cacheAccounting?: CacheAccountingMode | undefined;
-}): { costUnits: number; priceUnits: number; currency: string } {
+}): { costMicros: number; priceMicros: number; currency: string } {
   return computeChargesDomain(params);
 }
 
@@ -115,8 +115,8 @@ export type SettleUsageParams = {
   readonly provider: ProviderDoc;
   readonly protocol: "openai" | "anthropic";
   readonly usage: ChatResponse["usage"];
-  readonly costUnits: number;
-  readonly priceUnits: number;
+  readonly costMicros: number;
+  readonly priceMicros: number;
   readonly currency: string;
   readonly providerRequestId?: string | undefined;
   readonly gatewayRequestId?: string | undefined;
@@ -125,7 +125,7 @@ export type SettleUsageParams = {
   readonly errorCode?: string | undefined;
   readonly rules: readonly RateLimitRule[];
   readonly occurredAt?: Date | undefined;
-  readonly reservedUnits?: number | undefined;
+  readonly reservedMicros?: number | undefined;
   /** Preflight rolling-limit holds; when set, counters adjust by actual − reserved. */
   readonly limitReservation?: LimitReservation | null | undefined;
   /**
@@ -230,8 +230,8 @@ export const settleUsage = (
         cacheReadTokens: params.usage.cacheReadTokens ?? 0,
         cacheWriteTokens: params.usage.cacheWriteTokens ?? 0,
         totalTokens: total,
-        costUnits: params.costUnits,
-        priceUnits: params.priceUnits,
+        costMicros: params.costMicros,
+        priceMicros: params.priceMicros,
         currency: params.currency,
         providerRequestId: params.providerRequestId ?? null,
         gatewayRequestId: gatewayRequestId ?? null,
@@ -284,24 +284,24 @@ export const settleUsage = (
         if (insertResult === "duplicate_done") return;
 
         if (billed && customerId !== null) {
-          const reserved = Math.max(0, params.reservedUnits ?? 0);
-          if (params.priceUnits > 0 || reserved > 0) {
+          const reserved = Math.max(0, params.reservedMicros ?? 0);
+          if (params.priceMicros > 0 || reserved > 0) {
             let ok: boolean;
             if (reserved > 0) {
               ok = yield* settleBalanceWithReservation({
                 customerId,
                 organizationId: params.orgId,
-                priceUnits: params.priceUnits,
-                reservedUnits: reserved,
+                priceMicros: params.priceMicros,
+                reservedMicros: reserved,
                 currency: params.currency,
                 session,
               });
-            } else if (params.priceUnits > 0) {
+            } else if (params.priceMicros > 0) {
               const customers = yield* CustomersRepo;
               ok = yield* customers.debitBalance({
                 customerId,
                 organizationId: params.orgId,
-                priceUnits: params.priceUnits,
+                priceMicros: params.priceMicros,
                 currency: params.currency,
                 session,
               });
@@ -312,14 +312,14 @@ export const settleUsage = (
               return yield* Effect.fail(new SettlementGuardError());
             }
           }
-          if (params.priceUnits > 0) {
+          if (params.priceMicros > 0) {
             const customers = yield* CustomersRepo;
             yield* customers.insertAdjustment(
               {
                 _id: new ObjectId(),
                 organizationId: params.orgId,
                 customerId,
-                amountUnits: -params.priceUnits,
+                amountMicros: -params.priceMicros,
                 currency: params.currency,
                 reason: "usage_debit",
                 usageRecordId: null,
@@ -337,7 +337,7 @@ export const settleUsage = (
           const usagePayload = {
             tokens: usageRecord.totalTokens,
             requests: 1,
-            spendUnits: params.priceUnits,
+            spendMicros: params.priceMicros,
             currency: params.currency,
             modelAliasId: params.model.aliasId,
           };
@@ -379,7 +379,7 @@ export const settleUsage = (
                 customerId: customerId?.toHexString() ?? null,
                 orgId: params.orgId.toHexString(),
                 currency: params.currency,
-                priceUnits: params.priceUnits,
+                priceMicros: params.priceMicros,
                 gatewayRequestId: gatewayRequestId ?? null,
               }),
             );
@@ -402,14 +402,14 @@ function outboxReconContext(params: {
   durationMs: number;
   errorCode?: string | undefined;
   usage?: ChatResponse["usage"] | undefined;
-  priceUnits?: number | undefined;
-  costUnits?: number | undefined;
+  priceMicros?: number | undefined;
+  costMicros?: number | undefined;
   currency?: string | undefined;
-  priceUnitsOverride?: number | undefined;
+  priceMicrosOverride?: number | undefined;
   rules?: readonly RateLimitRule[] | undefined;
   occurredAt?: Date | undefined;
   cacheAccounting?: CacheAccountingMode | undefined;
-  reservedUnits?: number | undefined;
+  reservedMicros?: number | undefined;
   limitReservation?: LimitReservation | null | undefined;
   extra?: Record<string, unknown> | undefined;
 }): Record<string, unknown> {
@@ -437,33 +437,33 @@ function outboxReconContext(params: {
     upstreamModelId: params.entry.upstreamModelId,
     occurredAt: occurredAt.toISOString(),
     priceSchedule: {
-      inputUnitsPerMillion: priceSchedule.inputUnitsPerMillion,
-      outputUnitsPerMillion: priceSchedule.outputUnitsPerMillion,
-      reasoningUnitsPerMillion: priceSchedule.reasoningUnitsPerMillion,
-      cacheReadUnitsPerMillion: priceSchedule.cacheReadUnitsPerMillion,
-      cacheWriteUnitsPerMillion: priceSchedule.cacheWriteUnitsPerMillion,
+      inputMicrosPerMillion: priceSchedule.inputMicrosPerMillion,
+      outputMicrosPerMillion: priceSchedule.outputMicrosPerMillion,
+      reasoningMicrosPerMillion: priceSchedule.reasoningMicrosPerMillion,
+      cacheReadMicrosPerMillion: priceSchedule.cacheReadMicrosPerMillion,
+      cacheWriteMicrosPerMillion: priceSchedule.cacheWriteMicrosPerMillion,
     },
     ...(costSchedule
       ? {
           costSchedule: {
-            inputUnitsPerMillion: costSchedule.inputUnitsPerMillion,
-            outputUnitsPerMillion: costSchedule.outputUnitsPerMillion,
-            reasoningUnitsPerMillion: costSchedule.reasoningUnitsPerMillion,
-            cacheReadUnitsPerMillion: costSchedule.cacheReadUnitsPerMillion,
-            cacheWriteUnitsPerMillion: costSchedule.cacheWriteUnitsPerMillion,
+            inputMicrosPerMillion: costSchedule.inputMicrosPerMillion,
+            outputMicrosPerMillion: costSchedule.outputMicrosPerMillion,
+            reasoningMicrosPerMillion: costSchedule.reasoningMicrosPerMillion,
+            cacheReadMicrosPerMillion: costSchedule.cacheReadMicrosPerMillion,
+            cacheWriteMicrosPerMillion: costSchedule.cacheWriteMicrosPerMillion,
           },
         }
       : {}),
     ...(params.rules ? { rules: params.rules } : {}),
     ...(usageFrozen ? { usage: usageFrozen } : {}),
     ...(cacheAccounting ? { cacheAccounting } : {}),
-    ...(params.priceUnits !== undefined ? { priceUnits: params.priceUnits } : {}),
-    ...(params.costUnits !== undefined ? { costUnits: params.costUnits } : {}),
-    ...(params.priceUnitsOverride !== undefined
-      ? { priceUnitsOverride: params.priceUnitsOverride }
+    ...(params.priceMicros !== undefined ? { priceMicros: params.priceMicros } : {}),
+    ...(params.costMicros !== undefined ? { costMicros: params.costMicros } : {}),
+    ...(params.priceMicrosOverride !== undefined
+      ? { priceMicrosOverride: params.priceMicrosOverride }
       : {}),
-    ...(params.reservedUnits !== undefined && params.reservedUnits > 0
-      ? { reservedUnits: params.reservedUnits }
+    ...(params.reservedMicros !== undefined && params.reservedMicros > 0
+      ? { reservedMicros: params.reservedMicros }
       : {}),
     ...(limitHolds !== undefined ? { limitHolds } : {}),
     ...(params.extra ?? {}),
@@ -481,13 +481,13 @@ export type SettleUsageOrOutboxParams = {
   readonly response?: ChatResponse | undefined;
   readonly providerRequestId?: string | undefined;
   readonly gatewayRequestId?: string | undefined;
-  readonly reservedUnits?: number | undefined;
+  readonly reservedMicros?: number | undefined;
   readonly limitReservation?: LimitReservation | null | undefined;
   readonly status: number;
   readonly durationMs: number;
   readonly errorCode?: string | undefined;
   readonly rules: readonly RateLimitRule[];
-  readonly priceUnitsOverride?: number | undefined;
+  readonly priceMicrosOverride?: number | undefined;
   readonly occurredAt?: Date | undefined;
 };
 
@@ -554,7 +554,7 @@ export const settleUsageOrOutbox = (
     };
 
     const protocolCacheAccounting = cacheAccountingForProtocol(params.protocol);
-    const reservedUnits = Math.max(0, params.reservedUnits ?? 0);
+    const reservedMicros = Math.max(0, params.reservedMicros ?? 0);
     const limitReservation = params.limitReservation ?? null;
 
     if (providerUsage.status === "missing") {
@@ -569,11 +569,11 @@ export const settleUsageOrOutbox = (
           status: params.status,
           durationMs: params.durationMs,
           errorCode: params.errorCode,
-          priceUnitsOverride: params.priceUnitsOverride,
+          priceMicrosOverride: params.priceMicrosOverride,
           rules: params.rules,
           occurredAt,
           cacheAccounting: protocolCacheAccounting,
-          reservedUnits,
+          reservedMicros,
           limitReservation,
           extra: { reason: providerUsage.reason },
         }),
@@ -606,10 +606,10 @@ export const settleUsageOrOutbox = (
       usage,
       cacheAccounting: usage.cacheAccounting,
     });
-    const priceUnits =
-      params.priceUnitsOverride !== undefined
-        ? params.priceUnitsOverride
-        : charges.priceUnits;
+    const priceMicros =
+      params.priceMicrosOverride !== undefined
+        ? params.priceMicrosOverride
+        : charges.priceMicros;
 
     const settleResult = yield* settleUsage({
       orgId: params.orgId,
@@ -619,8 +619,8 @@ export const settleUsageOrOutbox = (
       provider: params.provider,
       protocol: params.protocol,
       usage,
-      costUnits: charges.costUnits,
-      priceUnits,
+      costMicros: charges.costMicros,
+      priceMicros,
       currency: charges.currency,
       providerRequestId,
       gatewayRequestId,
@@ -629,7 +629,7 @@ export const settleUsageOrOutbox = (
       errorCode: params.errorCode,
       rules: params.rules,
       occurredAt,
-      reservedUnits,
+      reservedMicros,
       limitReservation,
       rethrowGuardFailure: true,
     }).pipe(Effect.either);
@@ -654,14 +654,14 @@ export const settleUsageOrOutbox = (
         durationMs: params.durationMs,
         errorCode: params.errorCode,
         usage,
-        priceUnits,
-        costUnits: charges.costUnits,
+        priceMicros,
+        costMicros: charges.costMicros,
         currency: charges.currency,
-        priceUnitsOverride: params.priceUnitsOverride,
+        priceMicrosOverride: params.priceMicrosOverride,
         rules: params.rules,
         occurredAt,
         cacheAccounting: usage.cacheAccounting,
-        reservedUnits,
+        reservedMicros,
         limitReservation,
         extra: {
           error: err instanceof Error ? err.message : String(err),

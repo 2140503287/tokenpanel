@@ -27,8 +27,8 @@ const validEntry = () => ({
   upstreamModelId: "gpt-4o-mini",
 });
 const validPrice = () => ({
-  inputUnitsPerMillion: 300,
-  outputUnitsPerMillion: 600,
+  inputMicrosPerMillion: 3_000_000,
+  outputMicrosPerMillion: 6_000_000,
 });
 
 test("providerSdkType accepts builtin + plugin variants, rejects others", () => {
@@ -179,7 +179,7 @@ test("modelCreateInput requires entries min 1 + price + currency", () => {
   expect(modelCreateInput.safeParse({ ...b, entries: [] }).success).toBe(false);
   expect(modelCreateInput.safeParse({ ...b, aliasId: "BAD" }).success).toBe(false);
   expect(modelCreateInput.safeParse({ ...b, currency: "us" }).success).toBe(false);
-  expect(modelCreateInput.safeParse({ ...b, price: { inputUnitsPerMillion: 300 } }).success).toBe(false);
+  expect(modelCreateInput.safeParse({ ...b, price: { inputMicrosPerMillion: 3_000_000 } }).success).toBe(false);
 });
 
 test("fallbackReorderInput requires id+priority array", () => {

@@ -2,7 +2,7 @@
  * Balance preflight / reserve / release / debit workflow (9.3).
  *
  * Single application Effect path — no Promise dual-path.
- * Every org uses atomic reservedUnits holds before provider calls.
+ * Every org uses atomic reservedMicros holds before provider calls.
  * Rolling rate limits use the same admission pattern via reserveLimits.
  */
 
@@ -36,13 +36,13 @@ import {
 } from "../../services/reservation.ts";
 import { estimatePreFlightSpend } from "./estimate.ts";
 import {
-  availableUnits,
+  availableMicros,
   wouldReserveSucceed,
   type BalanceSnapshot,
 } from "./reservation.ts";
 
 export type BalanceReservation = {
-  reservedUnits: number;
+  reservedMicros: number;
   customerId: ObjectId;
   organizationId: ObjectId;
 };
@@ -60,7 +60,7 @@ export type PreFlightResult = {
    */
   readonly limitReservation: LimitReservation | null;
   readonly estimatedTokens: number;
-  readonly estimatedSpendUnits: number;
+  readonly estimatedSpendMicros: number;
 };
 
 export type BillingWorkflowError =
@@ -101,10 +101,10 @@ function mapSystem(message: string) {
 
 function failReserveDecision(
   snap: BalanceSnapshot,
-  needUnits: number,
+  needMicros: number,
   currency: string,
 ): InsufficientBalanceError {
-  const decision = wouldReserveSucceed(snap, needUnits, currency);
+  const decision = wouldReserveSucceed(snap, needMicros, currency);
   if (!decision.ok && decision.reason === "currency_mismatch") {
     return new InsufficientBalanceError({
       code: "currency_mismatch",
@@ -116,9 +116,9 @@ function failReserveDecision(
   return new InsufficientBalanceError({
     code: "insufficient_balance",
     message: "Insufficient available balance to complete request",
-    requiredUnits: needUnits,
+    requiredMicros: needMicros,
     currency,
-    balanceUnits: availableUnits(snap),
+    balanceMicros: availableMicros(snap),
   });
 }
 
@@ -210,7 +210,7 @@ export const preFlightWorkflow = (params: {
         customerId: params.customerId,
         rules,
         estimatedTokens: estimate.estimatedTokens,
-        estimatedSpendUnits: estimate.estimatedSpendUnits,
+        estimatedSpendMicros: estimate.estimatedSpendMicros,
         currency: estimate.currency,
         modelAliasId: params.aliasId,
         nowMs: clock.nowMs(),
@@ -231,7 +231,7 @@ export const preFlightWorkflow = (params: {
     }
 
     let reservation: BalanceReservation | null = null;
-    if (estimate.estimatedSpendUnits > 0) {
+    if (estimate.estimatedSpendMicros > 0) {
       let snap: BalanceSnapshot;
       if (params.balanceSnapshot) {
         snap = params.balanceSnapshot;
@@ -255,8 +255,8 @@ export const preFlightWorkflow = (params: {
           );
         }
         snap = {
-          amountUnits: customer.balance.amountUnits,
-          reservedUnits: customer.balance.reservedUnits ?? 0,
+          amountMicros: customer.balance.amountMicros,
+          reservedMicros: customer.balance.reservedMicros ?? 0,
           currency: customer.balance.currency,
         };
       }
@@ -264,20 +264,20 @@ export const preFlightWorkflow = (params: {
       if (params.dryRun) {
         const decision = wouldReserveSucceed(
           snap,
-          estimate.estimatedSpendUnits,
+          estimate.estimatedSpendMicros,
           estimate.currency,
         );
         if (!decision.ok) {
           return yield* Effect.fail(
             failReserveDecision(
               snap,
-              estimate.estimatedSpendUnits,
+              estimate.estimatedSpendMicros,
               estimate.currency,
             ),
           );
         }
         reservation = {
-          reservedUnits: estimate.estimatedSpendUnits,
+          reservedMicros: estimate.estimatedSpendMicros,
           customerId: params.customerId,
           organizationId: params.orgId,
         };
@@ -285,7 +285,7 @@ export const preFlightWorkflow = (params: {
         const held = yield* reserveBalance({
           customerId: params.customerId,
           organizationId: params.orgId,
-          needUnits: estimate.estimatedSpendUnits,
+          needMicros: estimate.estimatedSpendMicros,
           currency: estimate.currency,
         }).pipe(Effect.mapError(mapSystem("Balance reservation failed")));
         if (!held.reserved) {
@@ -297,14 +297,14 @@ export const preFlightWorkflow = (params: {
           return yield* Effect.fail(
             failReserveDecision(
               snap,
-              estimate.estimatedSpendUnits,
+              estimate.estimatedSpendMicros,
               estimate.currency,
             ),
           );
         }
-        if (held.reservedUnits > 0) {
+        if (held.reservedMicros > 0) {
           reservation = {
-            reservedUnits: held.reservedUnits,
+            reservedMicros: held.reservedMicros,
             customerId: params.customerId,
             organizationId: params.orgId,
           };
@@ -318,7 +318,7 @@ export const preFlightWorkflow = (params: {
       reservation,
       limitReservation,
       estimatedTokens: estimate.estimatedTokens,
-      estimatedSpendUnits: estimate.estimatedSpendUnits,
+      estimatedSpendMicros: estimate.estimatedSpendMicros,
     };
   });
 
@@ -327,11 +327,11 @@ export const releaseReservationWorkflow = (
   reservation: BalanceReservation | null | undefined,
 ): Effect.Effect<void, never, CustomersRepo> =>
   Effect.gen(function* () {
-    if (!reservation || reservation.reservedUnits <= 0) return;
+    if (!reservation || reservation.reservedMicros <= 0) return;
     yield* releaseBalanceReservation({
       customerId: reservation.customerId,
       organizationId: reservation.organizationId,
-      reservedUnits: reservation.reservedUnits,
+      reservedMicros: reservation.reservedMicros,
     }).pipe(Effect.catchAll(() => Effect.succeed(false)));
   });
 
@@ -362,8 +362,8 @@ export const releaseAllPreflightHolds = (params: {
 export const debitWithReservationWorkflow = (params: {
   readonly customerId: ObjectId;
   readonly organizationId: ObjectId;
-  readonly priceUnits: number;
-  readonly reservedUnits: number;
+  readonly priceMicros: number;
+  readonly reservedMicros: number;
   readonly currency: string;
 }): Effect.Effect<boolean, SystemError, CustomersRepo> =>
   settleBalanceWithReservation(params).pipe(

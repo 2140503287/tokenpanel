@@ -1,14 +1,22 @@
 /**
- * In-memory normalize: legacy *Minor money keys → *Units before schema decode.
+ * In-memory money normalize before schema decode.
  *
- * Used at Mongo read boundaries during the rename deploy window (and forever
- * as a no-op once post/ has dropped Minor keys). Prefer existing Units when
- * both are present.
+ * Two legacy layers, both resolved here so decoded docs always carry the
+ * authoritative *Micros fields the schemas require:
  *
- * Pure / side-effect free — safe to run on every document leaving Mongo.
+ *  1. *Minor → *Units (the earlier rename): prefer existing Units, else copy
+ *     Minor; drop the Minor key. (Permanent no-op once post/ dropped Minor.)
+ *  2. *Units → *Micros (the rescale): if Micros is absent, derive it as
+ *     Units × 10^(6 − exponent) using the document's currency. Prefer existing
+ *     Micros when present (new writer). Drop the Units key. (No-op once post/
+ *     drops Units.)
+ *
+ * Used at every Mongo read boundary during the deploy windows. Pure /
+ * side-effect free — safe to run on every document leaving Mongo. The currency
+ * factor is a frozen snapshot (this module MUST NOT import live contracts).
  */
 
-const SCHEDULE_LEAVES = [
+const MINOR_SCHEDULE_LEAVES = [
   ["inputUnitsPerMillion", "inputMinorPerMillion"],
   ["outputUnitsPerMillion", "outputMinorPerMillion"],
   ["reasoningUnitsPerMillion", "reasoningMinorPerMillion"],
@@ -18,11 +26,42 @@ const SCHEDULE_LEAVES = [
   ["outputAudioUnitsPerMillion", "outputAudioMinorPerMillion"],
 ] as const;
 
+const MICRO_SCHEDULE_LEAVES = [
+  ["inputMicrosPerMillion", "inputUnitsPerMillion"],
+  ["outputMicrosPerMillion", "outputUnitsPerMillion"],
+  ["reasoningMicrosPerMillion", "reasoningUnitsPerMillion"],
+  ["cacheReadMicrosPerMillion", "cacheReadUnitsPerMillion"],
+  ["cacheWriteMicrosPerMillion", "cacheWriteUnitsPerMillion"],
+  ["inputAudioMicrosPerMillion", "inputAudioUnitsPerMillion"],
+  ["outputAudioMicrosPerMillion", "outputAudioUnitsPerMillion"],
+] as const;
+
+const ZERO_DECIMAL = new Set([
+  "BIF", "CLP", "DJF", "GNF", "ISK", "JPY", "KMF", "KRW", "PYG", "RWF",
+  "UGX", "UYI", "VND", "VUV", "XAF", "XOF", "XPF",
+]);
+const THREE_DECIMAL = new Set(["BHD", "IQD", "JOD", "KWD", "LYD", "OMR", "TND"]);
+const FOUR_DECIMAL = new Set(["CLF", "UYW"]);
+
+/** micros-per-minor factor for an ISO 4217 currency (unknown → 2dp ×10,000). */
+function currencyFactor(currency: unknown): number {
+  const c = typeof currency === "string" ? currency.toUpperCase() : "";
+  if (ZERO_DECIMAL.has(c)) return 1_000_000;
+  if (THREE_DECIMAL.has(c)) return 1_000;
+  if (FOUR_DECIMAL.has(c)) return 100;
+  return 10_000;
+}
+
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return v !== null && typeof v === "object" && !Array.isArray(v);
 }
 
-function promote(
+function isInt(v: unknown): v is number {
+  return typeof v === "number" && Number.isInteger(v);
+}
+
+/** Minor → Units rename: prefer Units, else copy Minor; always drop Minor. */
+function promoteMinor(
   obj: Record<string, unknown>,
   unitsKey: string,
   minorKey: string,
@@ -36,33 +75,70 @@ function promote(
   } else if (units === undefined && minor !== undefined) {
     obj[unitsKey] = minor;
   }
-  // Drop legacy key so schemas that forbid unknown keys (if any) stay clean.
   if (minorKey in obj) {
     delete obj[minorKey];
   }
 }
 
-function normalizeSchedule(raw: unknown): unknown {
+/**
+ * Units → Micros rescale: prefer Micros, else derive from Units × factor;
+ * always drop Units. Signed values (adjustments) are scaled preserving sign.
+ */
+function promoteMicros(
+  obj: Record<string, unknown>,
+  microsKey: string,
+  unitsKey: string,
+  factor: number,
+): void {
+  const micros = obj[microsKey];
+  const units = obj[unitsKey];
+  if (!isInt(micros) && isInt(units)) {
+    obj[microsKey] = units * factor;
+  }
+  if (unitsKey in obj) {
+    delete obj[unitsKey];
+  }
+}
+
+function normalizeScheduleMinor(raw: unknown): unknown {
   if (!isPlainObject(raw)) return raw;
   const o = { ...raw };
-  for (const [u, m] of SCHEDULE_LEAVES) {
-    promote(o, u, m);
+  for (const [u, m] of MINOR_SCHEDULE_LEAVES) {
+    promoteMinor(o, u, m);
   }
   return o;
 }
 
-function normalizeMoney(raw: unknown): unknown {
+function normalizeScheduleMicros(raw: unknown, factor: number): unknown {
   if (!isPlainObject(raw)) return raw;
   const o = { ...raw };
-  promote(o, "amountUnits", "amountMinor");
+  for (const [micros, units] of MICRO_SCHEDULE_LEAVES) {
+    promoteMicros(o, micros, units, factor);
+  }
+  return o;
+}
+
+/** Full schedule normalize: minor→units then units→micros. */
+function normalizeSchedule(raw: unknown, factor: number): unknown {
+  return normalizeScheduleMicros(normalizeScheduleMinor(raw), factor);
+}
+
+function normalizeMoney(raw: unknown, factor: number): unknown {
+  if (!isPlainObject(raw)) return raw;
+  const o = { ...raw };
+  promoteMinor(o, "amountUnits", "amountMinor");
+  promoteMicros(o, "amountMicros", "amountUnits", factor);
   return o;
 }
 
 function normalizeBalance(raw: unknown): unknown {
   if (!isPlainObject(raw)) return raw;
   const o = { ...raw };
-  promote(o, "amountUnits", "amountMinor", { preferMinor: true });
-  promote(o, "reservedUnits", "reservedMinor", { preferMinor: true });
+  promoteMinor(o, "amountUnits", "amountMinor", { preferMinor: true });
+  promoteMinor(o, "reservedUnits", "reservedMinor", { preferMinor: true });
+  const factor = currencyFactor(o.currency);
+  promoteMicros(o, "amountMicros", "amountUnits", factor);
+  promoteMicros(o, "reservedMicros", "reservedUnits", factor);
   return o;
 }
 
@@ -79,8 +155,9 @@ function normalizeRateRules(raw: unknown): unknown {
 }
 
 /**
- * Deep-promote known money field renames on a Mongo document (or agg row).
- * Returns a shallow-cloned tree; does not mutate the input.
+ * Deep-promote known money fields on a Mongo document (or agg row) so it
+ * decodes under *Micros schemas. Returns a shallow-cloned tree; never mutates
+ * the input.
  */
 export function normalizeLegacyMoneyFields(value: unknown): unknown {
   if (!isPlainObject(value)) return value;
@@ -90,38 +167,54 @@ export function normalizeLegacyMoneyFields(value: unknown): unknown {
     doc.balance = normalizeBalance(doc.balance);
   }
 
-  promote(doc, "amountUnits", "amountMinor");
-  promote(doc, "costUnits", "costMinor");
-  promote(doc, "priceUnits", "priceMinor");
-  promote(doc, "totalCostUnits", "totalCostMinor");
-  promote(doc, "totalPriceUnits", "totalPriceMinor");
-  promote(doc, "totalUnits", "totalMinor");
+  // Top-level scalars (adjustments, budgets, usage). Currency is the doc's own.
+  const factor = currencyFactor(doc.currency);
+  promoteMinor(doc, "amountUnits", "amountMinor");
+  promoteMicros(doc, "amountMicros", "amountUnits", factor);
+  promoteMinor(doc, "costUnits", "costMinor");
+  promoteMicros(doc, "costMicros", "costUnits", factor);
+  promoteMinor(doc, "priceUnits", "priceMinor");
+  promoteMicros(doc, "priceMicros", "priceUnits", factor);
+  promoteMinor(doc, "totalCostUnits", "totalCostMinor");
+  promoteMicros(doc, "totalCostMicros", "totalCostUnits", factor);
+  promoteMinor(doc, "totalPriceUnits", "totalPriceMinor");
+  promoteMicros(doc, "totalPriceMicros", "totalPriceUnits", factor);
+  promoteMinor(doc, "totalUnits", "totalMinor");
+  promoteMicros(doc, "totalMicros", "totalUnits", factor);
 
   if ("price" in doc) {
-    // Plan money { amount, currency } OR token schedule — both handled.
+    // Plan money { amountMicros, currency } OR token schedule — both handled.
     const p = doc.price;
-    if (isPlainObject(p) && ("currency" in p || "amountMinor" in p || "amountUnits" in p)) {
-      doc.price = normalizeMoney(p);
+    if (isPlainObject(p) && ("currency" in p || "amountMinor" in p || "amountUnits" in p || "amountMicros" in p)) {
+      doc.price = normalizeMoney(p, currencyFactor(p.currency));
     } else {
-      doc.price = normalizeSchedule(p);
+      doc.price = normalizeSchedule(p, factor);
     }
   }
   if ("cost" in doc) {
-    doc.cost = normalizeSchedule(doc.cost);
+    doc.cost = normalizeSchedule(doc.cost, factor);
   }
   if ("includedCredit" in doc) {
-    doc.includedCredit = normalizeMoney(doc.includedCredit);
+    const c = doc.includedCredit;
+    doc.includedCredit = normalizeMoney(
+      c,
+      isPlainObject(c) ? currencyFactor(c.currency) : factor,
+    );
   }
   if ("startingBalance" in doc) {
-    doc.startingBalance = normalizeMoney(doc.startingBalance);
+    const s = doc.startingBalance;
+    doc.startingBalance = normalizeMoney(
+      s,
+      isPlainObject(s) ? currencyFactor(s.currency) : factor,
+    );
   }
 
   if (Array.isArray(doc.entries)) {
     doc.entries = doc.entries.map((entry) => {
       if (!isPlainObject(entry)) return entry;
       const e = { ...entry };
-      if ("price" in e) e.price = normalizeSchedule(e.price);
-      if ("cost" in e) e.cost = normalizeSchedule(e.cost);
+      if ("price" in e) e.price = normalizeSchedule(e.price, factor);
+      if ("cost" in e) e.cost = normalizeSchedule(e.cost, factor);
       return e;
     });
   }
@@ -136,18 +229,23 @@ export function normalizeLegacyMoneyFields(value: unknown): unknown {
     doc.dimension = "spend_units";
   }
 
-  // Settlement outbox context blob
+  // Settlement outbox context blob (carries its own currency).
   if (isPlainObject(doc.context)) {
     const ctx = { ...doc.context };
-    promote(ctx, "priceUnits", "priceMinor");
-    promote(ctx, "costUnits", "costMinor");
-    promote(ctx, "reservedUnits", "reservedMinor");
-    promote(ctx, "priceUnitsOverride", "priceMinorOverride");
+    const ctxFactor = currencyFactor(ctx.currency);
+    promoteMinor(ctx, "priceUnits", "priceMinor");
+    promoteMicros(ctx, "priceMicros", "priceUnits", ctxFactor);
+    promoteMinor(ctx, "costUnits", "costMinor");
+    promoteMicros(ctx, "costMicros", "costUnits", ctxFactor);
+    promoteMinor(ctx, "reservedUnits", "reservedMinor");
+    promoteMicros(ctx, "reservedMicros", "reservedUnits", ctxFactor);
+    promoteMinor(ctx, "priceUnitsOverride", "priceMinorOverride");
+    promoteMicros(ctx, "priceMicrosOverride", "priceUnitsOverride", ctxFactor);
     if ("priceSchedule" in ctx) {
-      ctx.priceSchedule = normalizeSchedule(ctx.priceSchedule);
+      ctx.priceSchedule = normalizeSchedule(ctx.priceSchedule, ctxFactor);
     }
     if ("costSchedule" in ctx) {
-      ctx.costSchedule = normalizeSchedule(ctx.costSchedule);
+      ctx.costSchedule = normalizeSchedule(ctx.costSchedule, ctxFactor);
     }
     doc.context = ctx;
   }

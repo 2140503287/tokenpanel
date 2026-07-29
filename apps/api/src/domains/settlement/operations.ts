@@ -65,10 +65,10 @@ export function computeSettlementCharges(params: {
   readonly model: ModelDoc;
   readonly usage: TokenUsage;
   readonly protocol: "openai" | "anthropic";
-  readonly priceUnitsOverride?: number | undefined;
+  readonly priceMicrosOverride?: number | undefined;
 }): {
-  readonly costUnits: number;
-  readonly priceUnits: number;
+  readonly costMicros: number;
+  readonly priceMicros: number;
   readonly currency: string;
   readonly cacheAccounting: CacheAccountingMode;
 } {
@@ -84,11 +84,11 @@ export function computeSettlementCharges(params: {
     cacheAccounting,
   });
   return {
-    costUnits: charges.costUnits,
-    priceUnits:
-      params.priceUnitsOverride !== undefined
-        ? params.priceUnitsOverride
-        : charges.priceUnits,
+    costMicros: charges.costMicros,
+    priceMicros:
+      params.priceMicrosOverride !== undefined
+        ? params.priceMicrosOverride
+        : charges.priceMicros,
     currency: charges.currency,
     cacheAccounting,
   };
@@ -123,13 +123,13 @@ export const settleOrOutboxWorkflow = (params: {
   readonly usageOutcome: UsageOutcome;
   readonly providerRequestId?: string | undefined;
   readonly gatewayRequestId?: string | undefined;
-  readonly reservedUnits?: number | undefined;
+  readonly reservedMicros?: number | undefined;
   readonly limitReservation?: LimitReservation | null | undefined;
   readonly status: number;
   readonly durationMs: number;
   readonly errorCode?: string | undefined;
   readonly rules: readonly RateLimitRule[];
-  readonly priceUnitsOverride?: number | undefined;
+  readonly priceMicrosOverride?: number | undefined;
   readonly occurredAt?: Date | undefined;
 }): Effect.Effect<
   SettlementResult,
@@ -150,13 +150,13 @@ export const settleOrOutboxWorkflow = (params: {
       providerUsage,
       providerRequestId: params.providerRequestId,
       gatewayRequestId: params.gatewayRequestId,
-      reservedUnits: params.reservedUnits,
+      reservedMicros: params.reservedMicros,
       limitReservation: params.limitReservation,
       status: params.status,
       durationMs: params.durationMs,
       errorCode: params.errorCode,
       rules: params.rules,
-      priceUnitsOverride: params.priceUnitsOverride,
+      priceMicrosOverride: params.priceMicrosOverride,
       occurredAt: params.occurredAt,
     }).pipe(Effect.mapError(mapSettleError));
 
@@ -180,8 +180,8 @@ export const settleUsageWorkflow = (params: {
   readonly provider: ProviderDoc;
   readonly protocol: "openai" | "anthropic";
   readonly usage: TokenUsage;
-  readonly costUnits: number;
-  readonly priceUnits: number;
+  readonly costMicros: number;
+  readonly priceMicros: number;
   readonly currency: string;
   readonly providerRequestId?: string | undefined;
   readonly gatewayRequestId?: string | undefined;
@@ -190,7 +190,7 @@ export const settleUsageWorkflow = (params: {
   readonly errorCode?: string | undefined;
   readonly rules: readonly RateLimitRule[];
   readonly occurredAt?: Date | undefined;
-  readonly reservedUnits?: number | undefined;
+  readonly reservedMicros?: number | undefined;
   readonly limitReservation?: LimitReservation | null | undefined;
 }): Effect.Effect<void, SettlementOpError, SettleServices> =>
   settleUsage({

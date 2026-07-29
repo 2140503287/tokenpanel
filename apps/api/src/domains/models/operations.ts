@@ -135,7 +135,7 @@ export const createModel = (input: {
   Effect.gen(function* () {
     const models = yield* ModelRepository;
     const crypto = yield* Crypto;
-    const providerIds = input.entries.map((e) => providerIdHex(e.providerId));
+    const providerIds = [...new Set(input.entries.map((e) => providerIdHex(e.providerId)))];
     const found = yield* models.countProviders(
       input.organizationId,
       providerIds,
@@ -223,9 +223,9 @@ export const updateModel = (input: {
     }
     const $set: Record<string, unknown> = { ...input.patch };
     if (input.entries) {
-      const providerIds = input.entries.map((e) =>
+      const providerIds = [...new Set(input.entries.map((e) =>
         providerIdHex(e.providerId),
-      );
+      ))];
       const found = yield* models.countProviders(
         input.organizationId,
         providerIds,

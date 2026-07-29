@@ -57,11 +57,11 @@ export const CURRENCY_POLICY = {
 } as const;
 
 /**
- * Reservation policy: every org holds estimated spend in reservedUnits
+ * Reservation policy: every org holds estimated spend in reservedMicros
  * before the provider call; settle debits actual and releases the hold.
  */
 export const RESERVATION_POLICY = {
-  /** Available = max(0, amountUnits - max(0, reservedUnits)). */
+  /** Available = max(0, amountMicros - max(0, reservedMicros)). */
   availableFormula: "amount_minus_reserved" as const,
   /** Zero need always succeeds without write. */
   zeroNeedAlwaysOk: true as const,

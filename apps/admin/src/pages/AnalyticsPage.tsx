@@ -3,7 +3,7 @@ import {
   getAnalyticsSummary,
   type AnalyticsSummary,
 } from "../api/analytics.ts";
-import { formatMoney, formatNumber } from "../utils/format.ts";
+import { formatMicros, formatNumber, formatCompact } from "../utils/format.ts";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,7 +16,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { Activity, Coins, TrendingUp, TrendingDown, Hash, BarChart3 } from "lucide-react";
+import { Activity, Coins, TrendingUp, TrendingDown, Hash, BarChart3, Database, Zap, Layers } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { StatCard } from "@/components/StatCard";
 import { FadeIn, StaggerItem } from "@/components/anim";
@@ -74,15 +74,25 @@ export default function AnalyticsPage(): React.ReactElement {
 
   const totals = summary?.totals;
   const primaryCurrency = totals?.byCurrency[0]?.currency ?? "USD";
-  const costUnits = totals?.byCurrency.reduce((s, r) => s + r.costUnits, 0) ?? 0;
-  const priceUnits =
-    totals?.byCurrency.reduce((s, r) => s + r.priceUnits, 0) ?? 0;
+  const costMicros = totals?.byCurrency.reduce((s, r) => s + r.costMicros, 0) ?? 0;
+  const priceMicros =
+    totals?.byCurrency.reduce((s, r) => s + r.priceMicros, 0) ?? 0;
   const multiCurrency = (totals?.byCurrency.length ?? 0) > 1;
+  // Cache & reasoning aggregates. Hit rate is blended across providers:
+  // OpenAI reports cached tokens inside prompt, Anthropic separately — the
+  // denominator (prompt + cache write, floored by cache read) approximates
+  // total input served for both.
+  const cacheRead = totals?.cacheReadTokens ?? 0;
+  const cacheWrite = totals?.cacheWriteTokens ?? 0;
+  const reasoningTokens = totals?.reasoningTokens ?? 0;
+  const inputServed = Math.max((totals?.promptTokens ?? 0) + cacheWrite, cacheRead, 1);
+  const hitRate = cacheRead / inputServed;
+  const hasCacheActivity = cacheRead > 0 || cacheWrite > 0;
   // Share bars compare within currency only — never mix USD/AUD/CAD units.
   const maxPriceByCurrency = new Map<string, number>();
   for (const r of summary?.topCustomers ?? []) {
     const prev = maxPriceByCurrency.get(r.currency) ?? 0;
-    if (r.priceUnits > prev) maxPriceByCurrency.set(r.currency, r.priceUnits);
+    if (r.priceMicros > prev) maxPriceByCurrency.set(r.currency, r.priceMicros);
   }
 
   return (
@@ -139,9 +149,9 @@ export default function AnalyticsPage(): React.ReactElement {
                 ? "…"
                 : multiCurrency
                   ? totals!.byCurrency
-                      .map((r) => formatMoney(r.costUnits, r.currency))
+                      .map((r) => formatMicros(r.costMicros, r.currency))
                       .join(" · ")
-                  : formatMoney(costUnits, primaryCurrency)
+                  : formatMicros(costMicros, primaryCurrency)
             }
             icon={<TrendingDown className="size-4" />}
           />
@@ -154,14 +164,69 @@ export default function AnalyticsPage(): React.ReactElement {
                 ? "…"
                 : multiCurrency
                   ? totals!.byCurrency
-                      .map((r) => formatMoney(r.priceUnits, r.currency))
+                      .map((r) => formatMicros(r.priceMicros, r.currency))
                       .join(" · ")
-                  : formatMoney(priceUnits, primaryCurrency)
+                  : formatMicros(priceMicros, primaryCurrency)
             }
             icon={<TrendingUp className="size-4" />}
           />
         </StaggerItem>
       </div>
+
+      <FadeIn className="flex flex-col gap-3">
+        <div className="flex items-center gap-2">
+          <h2 className="text-base font-semibold">Prompt cache &amp; reasoning</h2>
+          <span className="text-xs text-muted-foreground" title="OpenAI reports cached tokens inside input; Anthropic reports them separately. The hit rate is a blended approximation across providers.">
+            blended across providers
+          </span>
+        </div>
+        <Card className="p-6">
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
+            <div className="flex flex-col gap-3">
+              <span className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
+                <Database className="size-4" /> Cache hit rate
+              </span>
+              <span className="text-3xl font-semibold tracking-tight tabular-nums leading-none">
+                {loading ? "…" : hasCacheActivity ? `${(hitRate * 100).toFixed(1)}%` : "—"}
+              </span>
+              <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-success transition-all duration-700 ease-out"
+                  style={{ width: loading ? "0%" : `${Math.round(hitRate * 100)}%` }}
+                />
+              </div>
+              <span className="text-xs text-muted-foreground">
+                {hasCacheActivity
+                  ? `${formatCompact(cacheRead)} of ${formatCompact(inputServed)} input tokens served from cache`
+                  : "No cache activity in this range"}
+              </span>
+            </div>
+            <StatCard
+              label="Cache read tokens"
+              value={loading ? "…" : formatNumber(cacheRead)}
+              hint="Input served from the provider prompt cache (billed at the cache-read rate when priced)."
+              icon={<Database className="size-4" />}
+              tone="success"
+              loading={loading}
+            />
+            <StatCard
+              label="Cache write tokens"
+              value={loading ? "…" : formatNumber(cacheWrite)}
+              hint="Tokens written into the cache (Anthropic cache creation)."
+              icon={<Layers className="size-4" />}
+              loading={loading}
+            />
+            <StatCard
+              label="Reasoning tokens"
+              value={loading ? "…" : formatNumber(reasoningTokens)}
+              hint="Hidden reasoning/output-thinking tokens (o-series, extended thinking)."
+              icon={<Zap className="size-4" />}
+              tone="warning"
+              loading={loading}
+            />
+          </div>
+        </Card>
+      </FadeIn>
 
       <FadeIn className="flex flex-col gap-3">
         <h2 className="text-base font-semibold">Top customers by spend</h2>
@@ -172,6 +237,7 @@ export default function AnalyticsPage(): React.ReactElement {
                 <TableHead>Customer</TableHead>
                 <TableHead className="text-right">Requests</TableHead>
                 <TableHead className="text-right">Tokens</TableHead>
+                <TableHead className="text-right">Cache read</TableHead>
                 <TableHead className="text-right">Spend</TableHead>
                 <TableHead className="w-[30%]">Share</TableHead>
               </TableRow>
@@ -186,8 +252,34 @@ export default function AnalyticsPage(): React.ReactElement {
                   <TableCell className="text-right tabular-nums">
                     {formatNumber(row.tokens)}
                   </TableCell>
+                  <TableCell className="text-right">
+                    <div
+                      className="flex items-center justify-end gap-2"
+                      title={`${formatNumber(row.cacheReadTokens)} cached / ${formatNumber(row.promptTokens + row.cacheWriteTokens)} input tokens`}
+                    >
+                      <span className="tabular-nums text-xs text-muted-foreground">
+                        {formatCompact(row.cacheReadTokens)}
+                      </span>
+                      <div className="h-1.5 w-14 overflow-hidden rounded-full bg-muted">
+                        <div
+                          className="h-full rounded-full bg-success transition-all duration-500"
+                          style={{
+                            width: `${Math.round(
+                              (row.cacheReadTokens /
+                                Math.max(
+                                  row.promptTokens + row.cacheWriteTokens,
+                                  row.cacheReadTokens,
+                                  1,
+                                )) *
+                                100,
+                            )}%`,
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {formatMoney(row.priceUnits, row.currency)}
+                    {formatMicros(row.priceMicros, row.currency)}
                   </TableCell>
                   <TableCell>
                     <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
@@ -197,7 +289,7 @@ export default function AnalyticsPage(): React.ReactElement {
                         )}
                         style={{
                           width: `${Math.round(
-                            (row.priceUnits /
+                            (row.priceMicros /
                               Math.max(
                                 1,
                                 maxPriceByCurrency.get(row.currency) ?? 1,
@@ -212,7 +304,7 @@ export default function AnalyticsPage(): React.ReactElement {
               ))}
               {!loading && (summary?.topCustomers.length ?? 0) === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="text-center text-muted-foreground">
+                  <TableCell colSpan={6} className="text-center text-muted-foreground">
                     No usage in this range.
                   </TableCell>
                 </TableRow>

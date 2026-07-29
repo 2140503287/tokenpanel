@@ -18,9 +18,9 @@ export type NewCustomerRecord = {
   readonly name: string;
   readonly email: string | null;
   readonly balance: {
-    readonly amountUnits: number;
+    readonly amountMicros: number;
     readonly currency: string;
-    readonly reservedUnits: number;
+    readonly reservedMicros: number;
   };
   readonly status: CustomerStatus;
   readonly metadata: Readonly<Record<string, unknown>>;
@@ -29,7 +29,7 @@ export type NewCustomerRecord = {
 export type BalanceAdjustInput = {
   readonly organizationId: HexId;
   readonly customerId: HexId;
-  readonly amountUnits: number;
+  readonly amountMicros: number;
   readonly currency: string;
   readonly reason: "topup" | "adjustment" | "refund";
   readonly note: string | null;

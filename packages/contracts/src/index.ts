@@ -83,6 +83,17 @@ export {
 export type { CurrencyCode, Money, MoneyUnits } from "./money.ts";
 
 export {
+  MICROS_PER_MAJOR,
+  MICROS_FRACTIONAL_DIGITS,
+  moneyMicrosSchema,
+  microsPerMinor,
+  minorToMicros,
+  parseMajorToMicros,
+  formatMicrosToMajor,
+} from "./money-micros.ts";
+export type { MoneyMicros, ParseMicrosOptions } from "./money-micros.ts";
+
+export {
   CUSTOMER_STATUSES,
   customerStatusSchema,
   BALANCE_ADJUSTMENT_REASONS,
@@ -102,9 +113,9 @@ export {
   subscriptionStatusSchema,
 } from "./plan.ts";
 export type { PlanInterval, SubscriptionStatus } from "./plan.ts";
-
 export {
   rateLimitStreamScope,
+  rateLimitStreamDimension,
   rateLimitStreamKey,
   findDuplicateRateLimitStream,
   duplicateRateLimitStreamMessage,

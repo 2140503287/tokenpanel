@@ -488,3 +488,58 @@ restore_backup() {
   ok "restore complete: $backup_file"
   info "pre-restore backup retained: $(basename "$pre_restore_file")"
 }
+
+# Non-interactive restore for the automated update failure-recovery path.
+#
+# Contract (all hold when cmd_update calls this):
+#   - the api is already STOPPED, so no writes occur between the cutover
+#     backup and this restore → restoring loses nothing;
+#   - the caller has already decided to recover (no domain confirmation);
+#   - the caller rolls the image back to :previous and restarts the api, so
+#     this function does NOT run post migrations (they are what failed) and
+#     leaves the api STOPPED on return.
+#
+# Skips the interactive domain confirmation and the pre-restore backup that
+# restore_backup performs. Exit codes mirror _restore_into_temp: 0 = restored;
+# 1 = failed before swap (live DB untouched); 2 = swap failed partway (manual
+# recovery required).
+restore_backup_auto() {
+  local backup_file="$1"
+  [ -n "$backup_file" ] || { err "restore_backup_auto: backup file required"; return 1; }
+  [ -f "$backup_file" ] || { err "backup not found: $backup_file"; return 1; }
+  backup_file="$(cd "$(dirname "$backup_file")" && pwd)/$(basename "$backup_file")"
+
+  acquire_manager_lock "restore-auto" || return 1
+
+  local admin_uri="mongodb://${MONGO_USER_URI}:${MONGO_PASS_URI}@localhost:27017/admin?authSource=admin&directConnection=true"
+  local real_db="$MONGODB_DB"
+  local tmp_db="${real_db}__restore_tmp"
+
+  step "restore" "verifying archive integrity..."
+  if ! docker compose -f "$APP_YML" exec -T mongo mongorestore \
+      --uri="$admin_uri" \
+      --archive=/dev/stdin --gzip --dryRun --quiet < "$backup_file" 2>/dev/null; then
+    err "archive verification failed — refusing to restore (DB untouched)"
+    return 1
+  fi
+  ok "archive verified"
+
+  # Ensure the api is down for the swap (it should already be).
+  docker compose -f "$APP_YML" stop api 2>/dev/null || true
+
+  local rc=0
+  _restore_into_temp "$backup_file" "$tmp_db" "$real_db" "$admin_uri" || rc=$?
+
+  if [ "$rc" -eq 2 ]; then
+    err "auto-restore failed — live database may be PARTIALLY restored"
+    err "manual intervention required: tokenpanel restore \"$backup_file\""
+    return 2
+  fi
+  if [ "$rc" -eq 1 ]; then
+    err "auto-restore failed before swap — live database untouched"
+    return 1
+  fi
+
+  ok "database restored to pre-update state (api left stopped for rollback)"
+  return 0
+}

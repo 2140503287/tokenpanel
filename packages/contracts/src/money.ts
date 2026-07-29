@@ -2,13 +2,15 @@
  * Browser-safe money / currency product contracts.
  *
  * Policy version: 2026-07-15
- * Money is always integer units + ISO 4217 currency — never floats.
+ * Money is always integer micros (amountMicros, 10⁻⁶ of the major unit) +
+ * ISO 4217 currency — never floats.
  * Migrations MUST NOT import this module — keep frozen snapshots.
  *
  * Effect Schema live under `@tokenpanel/contracts/effect`.
  *
- * amountUnits scale is ISO 4217 exponent for the currency code:
- * 1 unit = 10^(-exp) of the major unit (USD: $0.01, JPY: ¥1, KWD: 0.001 KWD).
+ * The MoneyUnits/moneyUnitsSchema exports below are retained for optional
+ * legacy dual-field schema slots (ISO 4217 exponent scale: 1 unit =
+ * 10^(-exp) of the major unit). New code uses MoneyMicros (money-micros.ts).
  */
 import {
   CurrencyCode,

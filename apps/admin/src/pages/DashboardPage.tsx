@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { getDashboardSummary, type DashboardSummary } from "../api/dashboard.ts";
-import { formatMoney, formatRelative } from "../utils/format.ts";
+import { formatMicros, formatRelative } from "../utils/format.ts";
 import { statusVariant, type CustomerStatus } from "./customers/labels.ts";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -242,7 +242,7 @@ export default function DashboardPage(): React.ReactElement {
                     <>
                       <div className="flex flex-col gap-1">
                         <span className="text-3xl font-semibold tracking-tight tabular-nums sm:text-4xl">
-                          {formatMoney(primaryBalance[1], primaryBalance[0])}
+                          {formatMicros(primaryBalance[1], primaryBalance[0])}
                         </span>
                         {balanceEntries.length > 1 ? (
                           <span className="text-xs text-muted-foreground">
@@ -261,7 +261,7 @@ export default function DashboardPage(): React.ReactElement {
                                 {currency}
                               </div>
                               <div className="text-sm font-semibold tabular-nums">
-                                {formatMoney(amount, currency)}
+                                {formatMicros(amount, currency)}
                               </div>
                             </div>
                           ))}
@@ -381,8 +381,8 @@ export default function DashboardPage(): React.ReactElement {
                           {canReadBalances && c.balance ? (
                             <div className="hidden shrink-0 flex-col items-end sm:flex">
                               <span className="text-sm font-semibold tabular-nums">
-                                {formatMoney(
-                                  c.balance.amountUnits,
+                                {formatMicros(
+                                  c.balance.amountMicros,
                                   c.balance.currency,
                                 )}
                               </span>

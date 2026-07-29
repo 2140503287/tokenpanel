@@ -145,3 +145,11 @@ export const MAX_CHAT_MEDIA_BASE64_CHARS = 7_000_000;
 
 /** Max tools array length on chat requests. Unit: count. */
 export const MAX_CHAT_TOOLS_COUNT = 128;
+
+/**
+ * Max Anthropic extended-thinking `budget_tokens` accepted on /v1/messages.
+ * Unit: count (tokens). Tracks the largest supported model output window;
+ * raise as models grow. Bounds the preflight reservation input so a client
+ * cannot force an absurd hold via an unbounded thinking budget.
+ */
+export const MAX_THINKING_BUDGET_TOKENS = 128_000;

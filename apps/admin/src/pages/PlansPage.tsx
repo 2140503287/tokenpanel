@@ -21,22 +21,24 @@ import { CreditCard, Plus, ShieldCheck, X } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { FadeIn, StaggerItem } from "@/components/anim";
-import { formatMoney } from "../utils/format.ts";
+import { formatMicros } from "../utils/format.ts";
 import { hasPermission, useAuth } from "../auth/AuthContext.tsx";
 
 import {
   PLAN_INTERVALS,
   findDuplicateRateLimitStream,
   duplicateRateLimitStreamMessage,
+  parseMajorToMicros,
+  formatMicrosToMajor,
   type PlanInterval,
 } from "@tokenpanel/contracts";
 
 type Interval = PlanInterval;
-type Dimension = "tokens" | "requests" | "spend_units";
+type Dimension = "tokens" | "requests" | "spend_units" | "spend_micros";
 type Scope = "customer" | "plan" | "model";
 
 interface Money {
-  amountUnits: number;
+  amountMicros: number;
   currency: string;
 }
 
@@ -78,7 +80,7 @@ interface PlansResponse {
 }
 
 const INTERVALS: readonly Interval[] = PLAN_INTERVALS;
-const DIMENSIONS: readonly Dimension[] = ["tokens", "requests", "spend_units"];
+const DIMENSIONS: readonly Dimension[] = ["tokens", "requests", "spend_micros"];
 const SCOPES: readonly Scope[] = ["customer", "plan", "model"];
 
 const WINDOW_PRESETS: readonly { label: string; seconds: number }[] = [
@@ -92,8 +94,14 @@ const WINDOW_PRESETS: readonly { label: string; seconds: number }[] = [
 const DIMENSION_CAP_LABEL: Record<Dimension, string> = {
   tokens: "max tokens",
   requests: "max requests",
-  spend_units: "max spend (units)",
+  spend_units: "max spend",
+  spend_micros: "max spend",
 };
+
+/** Spend dimensions carry a currency + decimal major-unit cap. */
+function isSpendDimension(d: Dimension): boolean {
+  return d === "spend_units" || d === "spend_micros";
+}
 
 let ruleIdCounter = 0;
 function nextRuleId(): string {
@@ -144,18 +152,18 @@ function planToDraft(plan: Plan): DraftPlan {
   return {
     name: plan.name,
     description: plan.description ?? "",
-    priceAmount: String(plan.price.amountUnits),
+    priceAmount: formatMicrosToMajor(plan.price.amountMicros),
     priceCurrency: plan.price.currency,
     interval: plan.interval,
     intervalCount: String(plan.intervalCount),
-    includedCreditAmount: String(plan.includedCredit.amountUnits),
+    includedCreditAmount: formatMicrosToMajor(plan.includedCredit.amountMicros),
     includedCreditCurrency: plan.includedCredit.currency,
     includedTokens: String(plan.includedTokens),
     rateLimits: plan.rateLimits.map((r) => ({
       id: r.id,
       windowSeconds: String(r.windowSeconds),
       dimension: r.dimension,
-      capValue: String(r.capValue),
+      capValue: isSpendDimension(r.dimension) ? formatMicrosToMajor(r.capValue) : String(r.capValue),
       scope: r.scope,
       scopeTarget: r.scopeTarget ?? "",
       currency: r.currency ?? "USD",
@@ -165,27 +173,34 @@ function planToDraft(plan: Plan): DraftPlan {
 }
 
 export function toApiRule(rule: DraftRule) {
+  const spend = isSpendDimension(rule.dimension);
   return {
     id: rule.id || undefined,
     windowSeconds: Number(rule.windowSeconds),
     dimension: rule.dimension,
-    capValue: Number(rule.capValue),
+    capValue: spend ? parseMajorToMicros(rule.capValue) : Number(rule.capValue),
     scope: rule.scope,
     scopeTarget: rule.scopeTarget.trim() || undefined,
-    currency: rule.dimension === "spend_units" ? rule.currency.toUpperCase() || undefined : undefined,
+    currency: spend ? rule.currency.toUpperCase() || undefined : undefined,
     active: rule.active,
   };
 }
 
 export function validateDraft(draft: DraftPlan): string | null {
   if (!draft.name.trim()) return "Name is required.";
-  const price = Number(draft.priceAmount);
-  if (!Number.isInteger(price) || price < 0) return "Price must be a non-negative integer (units).";
+  try {
+    parseMajorToMicros(draft.priceAmount);
+  } catch {
+    return "Price must be a non-negative decimal (major units, ≤6 dp).";
+  }
   if (!/^[A-Z]{3}$/.test(draft.priceCurrency.toUpperCase())) return "Price currency must be a 3-letter code.";
   const intervalCount = Number(draft.intervalCount);
   if (!Number.isInteger(intervalCount) || intervalCount <= 0) return "Interval count must be a positive integer.";
-  const credit = Number(draft.includedCreditAmount);
-  if (!Number.isInteger(credit) || credit < 0) return "Included credit must be a non-negative integer (units).";
+  try {
+    parseMajorToMicros(draft.includedCreditAmount);
+  } catch {
+    return "Included credit must be a non-negative decimal (major units, ≤6 dp).";
+  }
   if (!/^[A-Z]{3}$/.test(draft.includedCreditCurrency.toUpperCase())) return "Credit currency must be a 3-letter code.";
   const tokens = Number(draft.includedTokens);
   if (!Number.isInteger(tokens) || tokens < 0) return "Included tokens must be a non-negative integer.";
@@ -193,10 +208,16 @@ export function validateDraft(draft: DraftPlan): string | null {
   for (const r of draft.rateLimits) {
     const w = Number(r.windowSeconds);
     if (!Number.isInteger(w) || w <= 0 || w > 31536000) return "Rate limit window must be 1–31536000 seconds.";
-    const c = Number(r.capValue);
-    if (!(c > 0) || !Number.isFinite(c)) return "Rate limit cap value must be positive.";
-    if (r.dimension === "spend_units") {
+    if (isSpendDimension(r.dimension)) {
+      try {
+        if (parseMajorToMicros(r.capValue) <= 0) return "Spend cap must be a positive amount.";
+      } catch {
+        return "Spend cap must be a positive decimal (major units, ≤6 dp).";
+      }
       if (!/^[A-Z]{3}$/.test(r.currency.toUpperCase())) return "Spend rule requires a 3-letter currency.";
+    } else {
+      const c = Number(r.capValue);
+      if (!(c > 0) || !Number.isFinite(c)) return "Rate limit cap value must be positive.";
     }
     if (r.scope === "model" && !r.scopeTarget.trim()) {
       return "Model scope requires a model alias.";
@@ -209,7 +230,7 @@ export function validateDraft(draft: DraftPlan): string | null {
       dimension: r.dimension,
       scope: r.scope,
       scopeTarget: r.scopeTarget.trim() || null,
-      currency: r.dimension === "spend_units" ? r.currency.toUpperCase() : null,
+      currency: isSpendDimension(r.dimension) ? r.currency.toUpperCase() : null,
       active: r.active,
     })),
   );
@@ -229,15 +250,15 @@ export function formatWindow(seconds: number): string {
   return `${seconds}s`;
 }
 
-/** Plan card money display — delegates to ISO-aware formatMoney. */
-export function formatAmountUnits(amountUnits: number, currency: string): string {
-  return formatMoney(amountUnits, currency);
+/** Plan card money display — delegates to ISO-aware formatMicros. */
+export function formatAmountMicros(amountMicros: number, currency: string): string {
+  return formatMicros(amountMicros, currency);
 }
 
 function ruleSummary(r: RateLimitRule): string {
   const cap =
-    r.dimension === "spend_units"
-      ? `${r.capValue} units${r.currency ? ` ${r.currency}` : ""}`
+    r.dimension === "spend_units" || r.dimension === "spend_micros"
+      ? formatMicros(r.capValue, r.currency ?? "USD")
       : String(r.capValue);
   const dim = r.dimension === "tokens" ? "tokens" : r.dimension === "requests" ? "requests" : "spend";
   const scope =
@@ -334,13 +355,13 @@ export default function PlansPage(): React.ReactElement {
         name: draft.name.trim(),
         description: draft.description.trim() || undefined,
         price: {
-          amountUnits: Number(draft.priceAmount),
+          amountMicros: parseMajorToMicros(draft.priceAmount),
           currency: draft.priceCurrency.toUpperCase(),
         },
         interval: draft.interval,
         intervalCount: Number(draft.intervalCount),
         includedCredit: {
-          amountUnits: Number(draft.includedCreditAmount),
+          amountMicros: parseMajorToMicros(draft.includedCreditAmount),
           currency: draft.includedCreditCurrency.toUpperCase(),
         },
         includedTokens: Number(draft.includedTokens),
@@ -413,8 +434,14 @@ export default function PlansPage(): React.ReactElement {
     return draft.rateLimits.map((r) => {
       const seconds = Number(r.windowSeconds);
       const cap =
-        r.dimension === "spend_units"
-          ? `${r.capValue} units${r.currency ? ` ${r.currency.toUpperCase()}` : ""}`
+        isSpendDimension(r.dimension)
+          ? (() => {
+              try {
+                return formatMicros(parseMajorToMicros(r.capValue), r.currency.toUpperCase() || "USD");
+              } catch {
+                return r.capValue;
+              }
+            })()
           : r.capValue;
       const dim = r.dimension === "tokens" ? "tokens" : r.dimension === "requests" ? "requests" : "spend";
       const scope =
@@ -490,10 +517,10 @@ export default function PlansPage(): React.ReactElement {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-3 lg:grid-cols-5">
             <Field
               id="plan-price-amount"
-              label="Price (units)"
-              tooltip="Integer units charged per billing interval. 100 = $1.00 at USD scale."
+              label="Price"
+              tooltip="Amount charged per billing interval in major units (e.g. 9.99 = $9.99 USD)."
             >
-              <Input id="plan-price-amount" type="number" min={0} step={1} value={draft.priceAmount} required disabled={saving} onChange={(e) => setField("priceAmount", e.target.value)} />
+              <Input id="plan-price-amount" type="number" min={0} step="any" value={draft.priceAmount} required disabled={saving} onChange={(e) => setField("priceAmount", e.target.value)} />
               <UnitsPreview value={draft.priceAmount} currency={draft.priceCurrency} />
             </Field>
             <Field id="plan-price-currency" label="Price currency">
@@ -501,10 +528,10 @@ export default function PlansPage(): React.ReactElement {
             </Field>
             <Field
               id="plan-credit-amount"
-              label="Included credit (units)"
-              tooltip="Units of balance granted each interval. Rolls over if unused (subject to plan policy)."
+              label="Included credit"
+              tooltip="Balance granted each interval in major units (e.g. 10 = $10.00 USD). Rolls over if unused (subject to plan policy)."
             >
-              <Input id="plan-credit-amount" type="number" min={0} step={1} value={draft.includedCreditAmount} required disabled={saving} onChange={(e) => setField("includedCreditAmount", e.target.value)} />
+              <Input id="plan-credit-amount" type="number" min={0} step="any" value={draft.includedCreditAmount} required disabled={saving} onChange={(e) => setField("includedCreditAmount", e.target.value)} />
               <UnitsPreview value={draft.includedCreditAmount} currency={draft.includedCreditCurrency} />
             </Field>
             <Field id="plan-credit-currency" label="Credit currency">
@@ -573,7 +600,7 @@ export default function PlansPage(): React.ReactElement {
                       </Select>
                     </Field>
                     <Field id={`rule-cap-${rule.id}`} label={DIMENSION_CAP_LABEL[rule.dimension]}>
-                      <Input id={`rule-cap-${rule.id}`} type="number" min={1} step={1} value={rule.capValue} required disabled={saving} onChange={(e) => updateRule(idx, "capValue", e.target.value)} />
+                      <Input id={`rule-cap-${rule.id}`} type="number" min={isSpendDimension(rule.dimension) ? 0 : 1} step={isSpendDimension(rule.dimension) ? "any" : 1} value={rule.capValue} required disabled={saving} onChange={(e) => updateRule(idx, "capValue", e.target.value)} />
                     </Field>
                     <Field id={`rule-scope-${rule.id}`} label="Scope" tooltip="Whether the limit applies per-customer, per-key, or per-organization.">
                       <Select value={rule.scope} onValueChange={(v) => updateRule(idx, "scope", v as Scope)} disabled={saving}>
@@ -592,7 +619,7 @@ export default function PlansPage(): React.ReactElement {
                       </Field>
                     )}
 
-                    {rule.dimension === "spend_units" && (
+                    {isSpendDimension(rule.dimension) && (
                       <Field id={`rule-cur-${rule.id}`} label="Currency">
                         <Input id={`rule-cur-${rule.id}`} type="text" maxLength={3} value={rule.currency} disabled={saving} onChange={(e) => updateRule(idx, "currency", e.target.value.toUpperCase())} />
                       </Field>
@@ -648,8 +675,8 @@ export default function PlansPage(): React.ReactElement {
                 </div>
                 {plan.description ? <p className="text-sm text-muted-foreground">{plan.description}</p> : null}
                 <div className="flex flex-col gap-1 text-sm">
-                  <span>Price: <strong>{formatAmountUnits(plan.price.amountUnits, plan.price.currency)}</strong> / {plan.intervalCount} {plan.interval}{plan.intervalCount > 1 ? "s" : ""}</span>
-                  <span>Credit: <strong>{formatAmountUnits(plan.includedCredit.amountUnits, plan.includedCredit.currency)}</strong></span>
+                  <span>Price: <strong>{formatAmountMicros(plan.price.amountMicros, plan.price.currency)}</strong> / {plan.intervalCount} {plan.interval}{plan.intervalCount > 1 ? "s" : ""}</span>
+                  <span>Credit: <strong>{formatAmountMicros(plan.includedCredit.amountMicros, plan.includedCredit.currency)}</strong></span>
                   <span>Tokens: <strong>{plan.includedTokens.toLocaleString()}</strong></span>
                   <span>Rate limits: <strong>{plan.rateLimits.length}</strong></span>
                 </div>

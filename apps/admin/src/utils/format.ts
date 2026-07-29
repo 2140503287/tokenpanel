@@ -1,3 +1,5 @@
+import { formatMicrosToMajor } from "@tokenpanel/contracts";
+
 /**
  * ISO 4217 decimal exponents for display/scale.
  * amountUnits is always an integer: 1 unit = 10^(-exp) of the major unit
@@ -49,21 +51,8 @@ export function currencyExponent(currency: string): number {
   return 2;
 }
 
-/**
- * Format units as display money. Always includes the ISO currency code so
- * dollar-symbol currencies (USD/AUD/CAD/…) are never ambiguous in multi-currency UIs.
- */
-export function formatMoney(amountUnits: number, currency: string): string {
-  const sign = amountUnits < 0 ? "-" : "";
-  const abs = Math.abs(amountUnits);
-  const code = currency.toUpperCase();
-  const exp = currencyExponent(code);
-  const divisor = 10 ** exp;
-  const major = Math.floor(abs / divisor);
-  const frac = abs % divisor;
-  const fracStr =
-    exp === 0 ? "" : `.${String(frac).padStart(exp, "0")}`;
-
+/** Currency symbol prefix for display (empty → bare major number). */
+function currencySymbol(code: string): string {
   switch (code) {
     case "USD":
     case "AUD":
@@ -71,24 +60,47 @@ export function formatMoney(amountUnits: number, currency: string): string {
     case "NZD":
     case "HKD":
     case "SGD":
-      return `${sign}$${major}${fracStr} ${code}`;
+      return "$";
     case "EUR":
-      return `${sign}\u20ac${major}${fracStr} ${code}`;
+      return "\u20ac";
     case "GBP":
-      return `${sign}\u00a3${major}${fracStr} ${code}`;
+      return "\u00a3";
     case "JPY":
-      return `${sign}\u00a5${major} ${code}`;
+      return "\u00a5";
     case "INR":
-      return `${sign}\u20b9${major}${fracStr} ${code}`;
+      return "\u20b9";
     case "KRW":
-      return `${sign}\u20a9${major} ${code}`;
-    case "KWD":
-    case "BHD":
-    case "OMR":
-      return `${sign}${major}${fracStr} ${code}`;
+      return "\u20a9";
     default:
-      return `${sign}${major}${fracStr} ${code}`;
+      return "";
   }
+}
+
+/**
+ * Format integer micros as display money with adaptive precision. Amounts at or
+ * above one minor unit render at the currency's standard exponent; sub-minor
+ * amounts expand (up to 6 places) so tiny charges never collapse to `$0.00`
+ * (e.g. 300 micros → `$0.0003 USD`). Integer-exact via the contracts codec —
+ * no float. Always includes the ISO code for multi-currency clarity.
+ */
+export function formatMicros(amountMicros: number, currency: string): string {
+  const sign = amountMicros < 0 ? "-" : "";
+  const abs = Math.abs(amountMicros);
+  const code = currency.toUpperCase();
+  const exp = currencyExponent(code);
+  const symbol = currencySymbol(code);
+  // Minor unit = 10^(6-exp) micros. At/above it, render at the currency's
+  // standard exponent; below it, expand (trimmed) so tiny charges never read
+  // as zero (e.g. 300 micros → "$0.0003 USD", not "$0.00 USD").
+  const minorMicros = 10 ** (6 - exp);
+  if (abs !== 0 && abs < minorMicros) {
+    return `${sign}${symbol}${formatMicrosToMajor(abs)} ${code}`;
+  }
+  const whole = Math.floor(abs / 1_000_000);
+  if (exp === 0) return `${sign}${symbol}${whole} ${code}`;
+  const fracMicros = abs % 1_000_000;
+  const frac = String(fracMicros).padStart(6, "0").slice(0, exp);
+  return `${sign}${symbol}${whole}.${frac} ${code}`;
 }
 
 export function formatDate(value: string | Date | null | undefined): string {

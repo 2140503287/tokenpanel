@@ -19,12 +19,16 @@ export type AnalyticsSummaryResult = {
   readonly totals: {
     readonly requests: number;
     readonly tokens: number;
+    readonly promptTokens: number;
+    readonly cacheReadTokens: number;
+    readonly cacheWriteTokens: number;
+    readonly reasoningTokens: number;
     readonly byCurrency: readonly {
       readonly currency: string;
       readonly requests: number;
       readonly tokens: number;
-      readonly costUnits: number;
-      readonly priceUnits: number;
+      readonly costMicros: number;
+      readonly priceMicros: number;
     }[];
   };
   readonly topCustomers: readonly {
@@ -33,8 +37,12 @@ export type AnalyticsSummaryResult = {
     readonly currency: string;
     readonly requests: number;
     readonly tokens: number;
-    readonly costUnits: number;
-    readonly priceUnits: number;
+    readonly cacheReadTokens: number;
+    readonly promptTokens: number;
+    readonly cacheWriteTokens: number;
+    readonly reasoningTokens: number;
+    readonly costMicros: number;
+    readonly priceMicros: number;
   }[];
 };
 
@@ -93,12 +101,16 @@ export const analyticsSummary = (input: {
       totals: {
         requests: totalsByCurrency.reduce((s, r) => s + r.requests, 0),
         tokens: totalsByCurrency.reduce((s, r) => s + r.tokens, 0),
+        promptTokens: totalsByCurrency.reduce((s, r) => s + r.promptTokens, 0),
+        cacheReadTokens: totalsByCurrency.reduce((s, r) => s + r.cacheReadTokens, 0),
+        cacheWriteTokens: totalsByCurrency.reduce((s, r) => s + r.cacheWriteTokens, 0),
+        reasoningTokens: totalsByCurrency.reduce((s, r) => s + r.reasoningTokens, 0),
         byCurrency: totalsByCurrency.map((r) => ({
           currency: r.currency || "USD",
           requests: r.requests,
           tokens: r.tokens,
-          costUnits: r.costUnits,
-          priceUnits: r.priceUnits,
+          costMicros: r.costMicros,
+          priceMicros: r.priceMicros,
         })),
       },
       topCustomers: topCustomers.map((r) => ({
@@ -107,8 +119,12 @@ export const analyticsSummary = (input: {
         currency: r.currency || "USD",
         requests: r.requests,
         tokens: r.tokens,
-        costUnits: r.costUnits,
-        priceUnits: r.priceUnits,
+        cacheReadTokens: r.cacheReadTokens,
+        promptTokens: r.promptTokens,
+        cacheWriteTokens: r.cacheWriteTokens,
+        reasoningTokens: r.reasoningTokens,
+        costMicros: r.costMicros,
+        priceMicros: r.priceMicros,
       })),
     };
   });

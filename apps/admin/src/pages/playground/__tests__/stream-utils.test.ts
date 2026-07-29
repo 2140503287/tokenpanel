@@ -2,7 +2,6 @@ import { test, expect } from "bun:test";
 import {
   applyEventToState,
   round,
-  formatUnits,
   type StreamPanelState,
 } from "../stream-utils.ts";
 
@@ -62,7 +61,7 @@ test("chat.completion.chunk accumulates reasoning_content separately", () => {
   expect(st.content).toBe("answer");
 });
 
-test("chat.completion.chunk maps usage tokens (incl. reasoning_tokens)", () => {
+test("chat.completion.chunk maps usage tokens (incl. completion_tokens_details.reasoning_tokens)", () => {
   const st = applyEventToState(baseState(), {
     object: "chat.completion.chunk",
     choices: [],
@@ -70,7 +69,7 @@ test("chat.completion.chunk maps usage tokens (incl. reasoning_tokens)", () => {
       prompt_tokens: 1000,
       completion_tokens: 2000,
       total_tokens: 3000,
-      reasoning_tokens: 42,
+      completion_tokens_details: { reasoning_tokens: 42 },
     },
   });
   expect(st.usage).toEqual({
@@ -95,14 +94,16 @@ test("chat.completion.chunk without usage preserves prior usage", () => {
   expect(st.content).toBe("x");
 });
 
-test("playground.cost sets cost, provider and billed flag", () => {
+test("playground.cost sets cost, provider and billed flag (micros wire shape)", () => {
+  // The API emits costMicros/priceMicros; the reducer must preserve those keys
+  // verbatim so the display reads real values, not undefined.
   const st = applyEventToState(baseState(), {
     object: "playground.cost",
-    cost: { costUnits: 123, priceUnits: 456, currency: "USD" },
+    cost: { costMicros: 123, priceMicros: 456, currency: "USD" },
     provider: { providerId: "p1", upstreamModelId: "mock-gpt", sdkType: "openai-compatible" },
     billed: true,
   });
-  expect(st.cost).toEqual({ costUnits: 123, priceUnits: 456, currency: "USD" });
+  expect(st.cost).toEqual({ costMicros: 123, priceMicros: 456, currency: "USD" });
   expect(st.provider).toEqual({
     providerId: "p1",
     upstreamModelId: "mock-gpt",
@@ -152,7 +153,3 @@ test("round rounds to the given decimal places", () => {
   expect(round(10, 0)).toBe(10);
 });
 
-test("formatUnits respects ISO currency exponent", () => {
-  // USD exponent 2 → 12345 minor units = 123.45, padded to 4 decimals.
-  expect(formatUnits(12345, "usd")).toBe("USD 123.4500");
-});

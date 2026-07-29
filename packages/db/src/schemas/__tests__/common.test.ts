@@ -71,52 +71,52 @@ test("tokenCount accepts safe non-negative ints, rejects unsafe/overflow values"
   expect(tokenCount.safeParse(Number.MAX_SAFE_INTEGER + 1).success).toBe(false);
 });
 
-test("money object requires amountUnits + currency", () => {
-  expect(money.safeParse({ amountUnits: 100, currency: "USD" }).success).toBe(true);
-  expect(money.safeParse({ amountUnits: 100 }).success).toBe(false);
-  expect(money.safeParse({ amountUnits: -1, currency: "USD" }).success).toBe(false);
-  expect(money.safeParse({ amountUnits: 100, currency: "us" }).success).toBe(false);
+test("money object requires amountMicros + currency", () => {
+  expect(money.safeParse({ amountMicros: 1_000_000, currency: "USD" }).success).toBe(true);
+  expect(money.safeParse({ amountMicros: 1_000_000 }).success).toBe(false);
+  expect(money.safeParse({ amountMicros: -1, currency: "USD" }).success).toBe(false);
+  expect(money.safeParse({ amountMicros: 1_000_000, currency: "us" }).success).toBe(false);
 });
 
-test("customerBalance defaults reservedUnits to 0", () => {
-  const r = customerBalance.parse({ amountUnits: 100, currency: "USD" });
-  expect(r.reservedUnits).toBe(0);
+test("customerBalance defaults reservedMicros to 0", () => {
+  const r = customerBalance.parse({ amountMicros: 1_000_000, currency: "USD" });
+  expect(r.reservedMicros).toBe(0);
   expect(
     customerBalance.safeParse({
-      amountUnits: 100,
-      reservedUnits: 25,
+      amountMicros: 1_000_000,
+      reservedMicros: 250_000,
       currency: "USD",
     }).success,
   ).toBe(true);
 });
 
-test("tokenPriceSchedule requires input+output, optional rest", () => {
+test("tokenPriceSchedule requires input+output micros, optional rest", () => {
   expect(
     tokenPriceSchedule.safeParse({
-      inputUnitsPerMillion: 300,
-      outputUnitsPerMillion: 600,
+      inputMicrosPerMillion: 3_000_000,
+      outputMicrosPerMillion: 6_000_000,
     }).success,
   ).toBe(true);
   expect(
     tokenPriceSchedule.safeParse({
-      inputUnitsPerMillion: 300,
-      outputUnitsPerMillion: 600,
-      reasoningUnitsPerMillion: 900,
-      cacheReadUnitsPerMillion: 30,
-      cacheWriteUnitsPerMillion: 40,
+      inputMicrosPerMillion: 3_000_000,
+      outputMicrosPerMillion: 6_000_000,
+      reasoningMicrosPerMillion: 9_000_000,
+      cacheReadMicrosPerMillion: 300_000,
+      cacheWriteMicrosPerMillion: 400_000,
     }).success,
   ).toBe(true);
-  expect(tokenPriceSchedule.safeParse({ inputUnitsPerMillion: 300 }).success).toBe(false);
+  expect(tokenPriceSchedule.safeParse({ inputMicrosPerMillion: 3_000_000 }).success).toBe(false);
   expect(
     tokenPriceSchedule.safeParse({
-      inputUnitsPerMillion: -1,
-      outputUnitsPerMillion: 600,
+      inputMicrosPerMillion: -1,
+      outputMicrosPerMillion: 6_000_000,
     }).success,
   ).toBe(false);
   expect(
     tokenPriceSchedule.safeParse({
-      inputUnitsPerMillion: 1.5,
-      outputUnitsPerMillion: 600,
+      inputMicrosPerMillion: 1.5,
+      outputMicrosPerMillion: 6_000_000,
     }).success,
   ).toBe(false);
 });

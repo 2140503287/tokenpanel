@@ -58,6 +58,7 @@ import { tryMongo } from "./try-mongo.ts";
 import { newObjectId, toObjectId } from "./object-id.ts";
 import { readOne, readMany, writeOne } from "./decode-helpers.ts";
 import { isDuplicateKeyError } from "../../../lib/crypto.ts";
+import { balanceFactorExpr } from "../balance-paths.ts";
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -786,12 +787,12 @@ export const CustomerRepositoryLive = Layer.effect(
             doc,
           );
           let adjustmentDoc: BalanceAdjustmentDoc | null = null;
-          if (customer.balance.amountUnits !== 0) {
+          if (customer.balance.amountMicros !== 0) {
             adjustmentDoc = {
               _id: new ObjectId(),
               organizationId: toObjectId(customer.organizationId),
               customerId,
-              amountUnits: customer.balance.amountUnits,
+              amountMicros: customer.balance.amountMicros,
               currency: customer.balance.currency,
               reason: "topup",
               usageRecordId: null,
@@ -866,7 +867,7 @@ export const CustomerRepositoryLive = Layer.effect(
             _id: new ObjectId(),
             organizationId: orgId,
             customerId: oid,
-            amountUnits: input.amountUnits,
+            amountMicros: input.amountMicros,
             currency: input.currency,
             reason: input.reason,
             usageRecordId: null,
@@ -899,25 +900,64 @@ export const CustomerRepositoryLive = Layer.effect(
                     organizationId: orgId,
                     "balance.currency": input.expectedBalanceCurrency,
                   },
-                  // Dual-write Units + legacy Minor until post/ drops Minor.
+                  // Dual-write Micros (authoritative) + Units (rounded) for old
+                  // readers until post/ drops Units.
                   [
                     {
                       $set: {
                         ...Object.fromEntries(
                           Object.entries(setFields).map(([k, v]) => [k, v]),
                         ),
-                        "balance.amountUnits": {
+                        "balance.amountMicros": {
                           $add: [
                             {
                               $ifNull: [
-                                "$balance.amountMinor",
-                                { $ifNull: ["$balance.amountUnits", 0] },
+                                "$balance.amountMicros",
+                                {
+                                  $multiply: [
+                                    {
+                                      $ifNull: [
+                                        "$balance.amountUnits",
+                                        { $ifNull: ["$balance.amountMinor", 0] },
+                                      ],
+                                    },
+                                    balanceFactorExpr(),
+                                  ],
+                                },
                               ],
                             },
-                            input.amountUnits,
+                            input.amountMicros,
                           ],
                         },
-                    "balance.amountMinor": "$$REMOVE",
+                        "balance.amountUnits": {
+                          $floor: {
+                            $divide: [
+                              {
+                                $add: [
+                                  {
+                                    $ifNull: [
+                                      "$balance.amountMicros",
+                                      {
+                                        $multiply: [
+                                          {
+                                            $ifNull: [
+                                              "$balance.amountUnits",
+                                              { $ifNull: ["$balance.amountMinor", 0] },
+                                            ],
+                                          },
+                                          balanceFactorExpr(),
+                                        ],
+                                      },
+                                    ],
+                                  },
+                                  input.amountMicros,
+                                ],
+                              },
+                              balanceFactorExpr(),
+                            ],
+                          },
+                        },
+                        "balance.amountMinor": "$$REMOVE",
                       },
                     },
                   ],
@@ -1645,8 +1685,8 @@ export const UsageRepositoryLive = Layer.effect(
               _id: string;
               requests: number;
               tokens: number;
-              costUnits: number;
-              priceUnits: number;
+              costMicros: number;
+              priceMicros: number;
               currency: string;
             }>([
               { $match: match },
@@ -1655,45 +1695,61 @@ export const UsageRepositoryLive = Layer.effect(
                   _id: "$modelAliasId",
                   requests: { $sum: 1 },
                   tokens: { $sum: "$totalTokens" },
-                  costUnits: {
+                  costMicros: {
                     $sum: {
-                      $ifNull: ["$costUnits", { $ifNull: ["$costMinor", 0] }],
+                      $ifNull: [
+                        "$costMicros",
+                        {
+                          $multiply: [
+                            { $ifNull: ["$costUnits", { $ifNull: ["$costMinor", 0] }] },
+                            balanceFactorExpr("$currency"),
+                          ],
+                        },
+                      ],
                     },
                   },
-                  priceUnits: {
+                  priceMicros: {
                     $sum: {
-                      $ifNull: ["$priceUnits", { $ifNull: ["$priceMinor", 0] }],
+                      $ifNull: [
+                        "$priceMicros",
+                        {
+                          $multiply: [
+                            { $ifNull: ["$priceUnits", { $ifNull: ["$priceMinor", 0] }] },
+                            balanceFactorExpr("$currency"),
+                          ],
+                        },
+                      ],
                     },
                   },
                   currency: { $first: "$currency" },
                 },
               },
-              { $sort: { costUnits: -1 } },
+              { $sort: { costMicros: -1 } },
             ])
             .toArray();
           let totalRequests = 0;
           let totalTokens = 0;
-          let totalCostUnits = 0;
-          let totalPriceUnits = 0;
+          let totalCostMicros = 0;
+          let totalPriceMicros = 0;
           const currency = rows[0]?.currency ?? "USD";
           const byModel = rows.map((r) => {
             totalRequests += r.requests;
             totalTokens += r.tokens;
-            totalCostUnits += r.costUnits;
-            totalPriceUnits += r.priceUnits;
+            totalCostMicros += r.costMicros;
+            totalPriceMicros += r.priceMicros;
             return {
               modelAliasId: r._id,
               requests: r.requests,
               tokens: r.tokens,
-              costUnits: r.costUnits,
-              priceUnits: r.priceUnits,
+              costMicros: r.costMicros,
+              priceMicros: r.priceMicros,
             };
           });
           return {
             totalRequests,
             totalTokens,
-            totalCostUnits,
-            totalPriceUnits,
+            totalCostMicros,
+            totalPriceMicros,
             currency,
             byModel,
           };
@@ -1710,8 +1766,12 @@ export const UsageRepositoryLive = Layer.effect(
                 _id: string;
                 requests: number;
                 tokens: number;
-                costUnits: number;
-                priceUnits: number;
+                promptTokens: number;
+                cacheReadTokens: number;
+                cacheWriteTokens: number;
+                reasoningTokens: number;
+                costMicros: number;
+                priceMicros: number;
               }>([
                 { $match: match },
                 {
@@ -1719,14 +1779,34 @@ export const UsageRepositoryLive = Layer.effect(
                     _id: "$currency",
                     requests: { $sum: 1 },
                     tokens: { $sum: "$totalTokens" },
-                    costUnits: {
+                    promptTokens: { $sum: "$promptTokens" },
+                    cacheReadTokens: { $sum: { $ifNull: ["$cacheReadTokens", 0] } },
+                    cacheWriteTokens: { $sum: { $ifNull: ["$cacheWriteTokens", 0] } },
+                    reasoningTokens: { $sum: { $ifNull: ["$reasoningTokens", 0] } },
+                    costMicros: {
                       $sum: {
-                        $ifNull: ["$costUnits", { $ifNull: ["$costMinor", 0] }],
+                        $ifNull: [
+                          "$costMicros",
+                          {
+                            $multiply: [
+                              { $ifNull: ["$costUnits", { $ifNull: ["$costMinor", 0] }] },
+                              balanceFactorExpr("$currency"),
+                            ],
+                          },
+                        ],
                       },
                     },
-                    priceUnits: {
+                    priceMicros: {
                       $sum: {
-                        $ifNull: ["$priceUnits", { $ifNull: ["$priceMinor", 0] }],
+                        $ifNull: [
+                          "$priceMicros",
+                          {
+                            $multiply: [
+                              { $ifNull: ["$priceUnits", { $ifNull: ["$priceMinor", 0] }] },
+                              balanceFactorExpr("$currency"),
+                            ],
+                          },
+                        ],
                       },
                     },
                   },
@@ -1738,8 +1818,12 @@ export const UsageRepositoryLive = Layer.effect(
                 _id: { customerId: ObjectId; currency: string };
                 requests: number;
                 tokens: number;
-                costUnits: number;
-                priceUnits: number;
+                promptTokens: number;
+                cacheReadTokens: number;
+                cacheWriteTokens: number;
+                reasoningTokens: number;
+                costMicros: number;
+                priceMicros: number;
               }>([
                 { $match: { ...match, customerId: { $ne: null } } },
                 {
@@ -1750,19 +1834,39 @@ export const UsageRepositoryLive = Layer.effect(
                     },
                     requests: { $sum: 1 },
                     tokens: { $sum: "$totalTokens" },
-                    costUnits: {
+                    cacheReadTokens: { $sum: { $ifNull: ["$cacheReadTokens", 0] } },
+                    promptTokens: { $sum: "$promptTokens" },
+                    cacheWriteTokens: { $sum: { $ifNull: ["$cacheWriteTokens", 0] } },
+                    reasoningTokens: { $sum: { $ifNull: ["$reasoningTokens", 0] } },
+                    costMicros: {
                       $sum: {
-                        $ifNull: ["$costUnits", { $ifNull: ["$costMinor", 0] }],
+                        $ifNull: [
+                          "$costMicros",
+                          {
+                            $multiply: [
+                              { $ifNull: ["$costUnits", { $ifNull: ["$costMinor", 0] }] },
+                              balanceFactorExpr("$currency"),
+                            ],
+                          },
+                        ],
                       },
                     },
-                    priceUnits: {
+                    priceMicros: {
                       $sum: {
-                        $ifNull: ["$priceUnits", { $ifNull: ["$priceMinor", 0] }],
+                        $ifNull: [
+                          "$priceMicros",
+                          {
+                            $multiply: [
+                              { $ifNull: ["$priceUnits", { $ifNull: ["$priceMinor", 0] }] },
+                              balanceFactorExpr("$currency"),
+                            ],
+                          },
+                        ],
                       },
                     },
                   },
                 },
-                { $sort: { priceUnits: -1 } },
+                { $sort: { priceMicros: -1 } },
                 {
                   $group: {
                     _id: "$_id.currency",
@@ -1772,7 +1876,7 @@ export const UsageRepositoryLive = Layer.effect(
                 { $project: { rows: { $slice: ["$rows", top] } } },
                 { $unwind: "$rows" },
                 { $replaceRoot: { newRoot: "$rows" } },
-                { $sort: { priceUnits: -1 } },
+                { $sort: { priceMicros: -1 } },
               ])
               .toArray(),
           ]);
@@ -1781,16 +1885,24 @@ export const UsageRepositoryLive = Layer.effect(
               currency: r._id || "USD",
               requests: r.requests,
               tokens: r.tokens,
-              costUnits: r.costUnits,
-              priceUnits: r.priceUnits,
+              promptTokens: r.promptTokens,
+              cacheReadTokens: r.cacheReadTokens,
+              cacheWriteTokens: r.cacheWriteTokens,
+              reasoningTokens: r.reasoningTokens,
+              costMicros: r.costMicros,
+              priceMicros: r.priceMicros,
             })),
             topCustomers: byCustomer.map((r) => ({
               customerId: r._id.customerId.toHexString(),
               currency: r._id.currency || "USD",
               requests: r.requests,
               tokens: r.tokens,
-              costUnits: r.costUnits,
-              priceUnits: r.priceUnits,
+              cacheReadTokens: r.cacheReadTokens,
+              promptTokens: r.promptTokens,
+              cacheWriteTokens: r.cacheWriteTokens,
+              reasoningTokens: r.reasoningTokens,
+              costMicros: r.costMicros,
+              priceMicros: r.priceMicros,
             })),
           };
         }),
@@ -1830,17 +1942,28 @@ export const UsageRepositoryLive = Layer.effect(
               }),
               includeBalances
                 ? db().customers
-                    .aggregate<{ _id: string; totalUnits: number }>([
+                    .aggregate<{ _id: string; totalMicros: number }>([
                       { $match: { organizationId: orgId } },
-                      // Prefer amountMinor (legacy) over amountUnits (new) during dual-write migration window — do NOT simplify until post-migration confirmed applied everywhere.
+                      // Effective balance in micros: prefer Micros, else convert
+                      // legacy Units/Minor by the per-doc currency factor.
                       {
                         $project: {
                           _id: 0,
                           currency: "$balance.currency",
                           amount: {
                             $ifNull: [
-                              "$balance.amountMinor",
-                              { $ifNull: ["$balance.amountUnits", 0] },
+                              "$balance.amountMicros",
+                              {
+                                $multiply: [
+                                  {
+                                    $ifNull: [
+                                      "$balance.amountUnits",
+                                      { $ifNull: ["$balance.amountMinor", 0] },
+                                    ],
+                                  },
+                                  balanceFactorExpr(),
+                                ],
+                              },
                             ],
                           },
                         },
@@ -1848,13 +1971,13 @@ export const UsageRepositoryLive = Layer.effect(
                       {
                         $group: {
                           _id: "$currency",
-                          totalUnits: { $sum: "$amount" },
+                          totalMicros: { $sum: "$amount" },
                         },
                       },
                     ])
                     .toArray()
                 : Promise.resolve(
-                    [] as { _id: string; totalUnits: number }[],
+                    [] as { _id: string; totalMicros: number }[],
                   ),
               db().customers
                 .find({ organizationId: orgId })
@@ -1865,7 +1988,7 @@ export const UsageRepositoryLive = Layer.effect(
           );
           const balancesByCurrency: Record<string, number> = {};
           for (const row of balanceAgg) {
-            if (row._id) balancesByCurrency[row._id] = row.totalUnits;
+            if (row._id) balancesByCurrency[row._id] = row.totalMicros;
           }
           const decodedRecent = yield* decodeCustomers(recentCustomers);
           return {

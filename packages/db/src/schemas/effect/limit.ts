@@ -23,6 +23,7 @@ export const LimitDimension = Schema.Literal(
   "tokens",
   "requests",
   "spend_units",
+  "spend_micros",
 );
 export type LimitDimension = Schema.Schema.Type<typeof LimitDimension>;
 
@@ -75,7 +76,7 @@ export const SubscriptionPlanDoc = Schema.Struct({
   interval: PlanInterval,
   intervalCount: Schema.optionalWith(PositiveSafeInt, { default: () => 1 }),
   includedCredit: Schema.optionalWith(Money, {
-    default: () => ({ amountUnits: 0, currency: "USD" }),
+    default: () => ({ amountMicros: 0, currency: "USD" }),
   }),
   includedTokens: Schema.optionalWith(NonNegativeSafeInt, {
     default: () => 0,
@@ -201,7 +202,8 @@ export const BudgetDoc = Schema.Struct({
   customerId: ObjectIdFromSelf,
   periodStart: DateFromSelf,
   periodEnd: DateFromSelf,
-  amountUnits: NonNegativeSafeInt,
+  amountMicros: NonNegativeSafeInt,
+  amountUnits: exactOptional(NonNegativeSafeInt),
   currency: CurrencyCode,
   alertThresholds: Schema.optionalWith(
     Schema.Array(SafeInt.pipe(Schema.between(0, 100))),
@@ -214,7 +216,8 @@ export const BudgetCreateInput = Schema.Struct({
   customerId: ObjectIdFromString,
   periodStart: DateFromUnknown,
   periodEnd: DateFromUnknown,
-  amountUnits: NonNegativeSafeInt,
+  amountMicros: NonNegativeSafeInt,
+  amountUnits: exactOptional(NonNegativeSafeInt),
   currency: CurrencyCode,
   alertThresholds: exactOptional(
     Schema.Array(SafeInt.pipe(Schema.between(0, 100))),
@@ -224,6 +227,7 @@ export const BudgetCreateInput = Schema.Struct({
 export const BudgetUpdateInput = Schema.Struct({
   periodStart: exactOptional(DateFromSelf),
   periodEnd: exactOptional(DateFromSelf),
+  amountMicros: exactOptional(NonNegativeSafeInt),
   amountUnits: exactOptional(NonNegativeSafeInt),
   currency: exactOptional(CurrencyCode),
   alertThresholds: exactOptional(

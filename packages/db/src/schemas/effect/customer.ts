@@ -62,8 +62,8 @@ export const CustomerDoc = Schema.Struct({
   email: exactNullish(Email),
   balance: Schema.optionalWith(CustomerBalance, {
     default: () => ({
-      amountUnits: 0,
-      reservedUnits: 0,
+      amountMicros: 0,
+      reservedMicros: 0,
       currency: "USD",
     }),
   }),
@@ -105,7 +105,8 @@ export const BalanceAdjustmentDoc = Schema.Struct({
   _id: ObjectIdFromSelf,
   organizationId: ObjectIdFromSelf,
   customerId: ObjectIdFromSelf,
-  amountUnits: SafeInt,
+  amountMicros: SafeInt,
+  amountUnits: exactOptional(SafeInt),
   currency: CurrencyCode,
   reason: BalanceAdjustmentReason,
   usageRecordId: exactNullish(ObjectIdFromSelf),
@@ -116,7 +117,8 @@ export const BalanceAdjustmentDoc = Schema.Struct({
 
 export const BalanceAdjustmentCreateInput = Schema.Struct({
   customerId: ObjectIdFromString,
-  amountUnits: SafeInt,
+  amountMicros: SafeInt,
+  amountUnits: exactOptional(SafeInt),
   currency: CurrencyCode,
   reason: BalanceAdjustmentReason,
   usageRecordId: exactOptional(ObjectIdFromString),

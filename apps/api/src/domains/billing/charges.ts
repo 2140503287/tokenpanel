@@ -1,6 +1,6 @@
 /**
  * Pure charge computation (task 9.1).
- * Money in integer units; never free-bill missing usage (callers guard).
+ * Money in integer micros (10⁻⁶ of major unit); never free-bill missing usage.
  */
 
 import type { ModelDoc, ModelEntryDoc } from "@tokenpanel/db";
@@ -8,15 +8,15 @@ import type { CacheAccountingMode } from "../../providers/provider-usage.ts";
 import type { ChatResponse } from "../../providers/types.ts";
 import { TOKENS_PER_MILLION_COUNT } from "./policy.ts";
 
-/** Per-million unit price/cost schedule fields. */
+/** Per-million micros price/cost schedule fields. */
 export type ChargeSchedule = {
-  inputUnitsPerMillion?: number | undefined;
-  outputUnitsPerMillion?: number | undefined;
-  reasoningUnitsPerMillion?: number | undefined;
-  cacheReadUnitsPerMillion?: number | undefined;
-  cacheWriteUnitsPerMillion?: number | undefined;
-  inputAudioUnitsPerMillion?: number | undefined;
-  outputAudioUnitsPerMillion?: number | undefined;
+  inputMicrosPerMillion?: number | undefined;
+  outputMicrosPerMillion?: number | undefined;
+  reasoningMicrosPerMillion?: number | undefined;
+  cacheReadMicrosPerMillion?: number | undefined;
+  cacheWriteMicrosPerMillion?: number | undefined;
+  inputAudioMicrosPerMillion?: number | undefined;
+  outputAudioMicrosPerMillion?: number | undefined;
 };
 
 /** Protocol default when adapters did not stamp usage.cacheAccounting. */
@@ -53,8 +53,8 @@ export function applyTokenSchedule(
 ): number {
   const reasoningRaw = Math.max(0, usage.reasoningTokens ?? 0);
   const reasoning = Math.min(reasoningRaw, usage.completionTokens);
-  const outputRate = schedule.outputUnitsPerMillion ?? 0;
-  const reasoningRate = schedule.reasoningUnitsPerMillion;
+  const outputRate = schedule.outputMicrosPerMillion ?? 0;
+  const reasoningRate = schedule.reasoningMicrosPerMillion;
 
   let outputCharge: number;
   if (reasoningRate === undefined || reasoning === 0) {
@@ -68,11 +68,11 @@ export function applyTokenSchedule(
       Math.ceil((reasoning * reasoningRate) / TOKENS_PER_MILLION_COUNT);
   }
 
-  const inputRate = schedule.inputUnitsPerMillion ?? 0;
+  const inputRate = schedule.inputMicrosPerMillion ?? 0;
   const cacheRead = Math.max(0, usage.cacheReadTokens ?? 0);
   const cacheWrite = Math.max(0, usage.cacheWriteTokens ?? 0);
-  const readRate = schedule.cacheReadUnitsPerMillion;
-  const writeRate = schedule.cacheWriteUnitsPerMillion;
+  const readRate = schedule.cacheReadMicrosPerMillion;
+  const writeRate = schedule.cacheWriteMicrosPerMillion;
   const prompt = usage.promptTokens;
   const cacheAccounting = resolveCacheAccounting(usage, opts?.cacheAccounting);
 
@@ -104,23 +104,23 @@ export function applyTokenSchedule(
 }
 
 /**
- * Compute cost (org pays) and price (customer charged) in units.
+ * Compute cost (org pays) and price (customer charged) in micros.
  */
 export function computeCharges(params: {
   entry: ModelEntryDoc;
   model: ModelDoc;
   usage: ChatResponse["usage"];
   cacheAccounting?: CacheAccountingMode | undefined;
-}): { costUnits: number; priceUnits: number; currency: string } {
+}): { costMicros: number; priceMicros: number; currency: string } {
   const { entry, model, usage } = params;
   const priceSchedule = entry.price ?? model.price;
   const costSchedule = entry.cost;
   const opts = { cacheAccounting: params.cacheAccounting };
 
-  const priceUnits = applyTokenSchedule(priceSchedule, usage, opts);
-  const costUnits = costSchedule
+  const priceMicros = applyTokenSchedule(priceSchedule, usage, opts);
+  const costMicros = costSchedule
     ? applyTokenSchedule(costSchedule, usage, opts)
     : 0;
 
-  return { costUnits, priceUnits, currency: model.currency };
+  return { costMicros, priceMicros, currency: model.currency };
 }

@@ -18,7 +18,12 @@ import {
   V1ChatError,
   type ChatContext,
 } from "../../lib/v1-chat-context.ts";
-import type { ChatRequest, ChatMessage } from "../../providers/index.ts";
+import type { ChatRequest, ChatMessage, ContentPart } from "../../providers/index.ts";
+import {
+  toAnthropicStopReason,
+  anthropicToolInstructions,
+  AnthropicBlockStream,
+} from "../../providers/index.ts";
 import {
   applyDoneUsage,
   classifyGenerationFailure,
@@ -54,16 +59,46 @@ const publicAnthropic = new Hono<{ Variables: PublicAuthVariables }>();
  * Ignored for customer keys; stripped before upstream.
  */
 export function translateAnthropicMessage(m: AnthropicMessage): ChatMessage {
-  let content: string | import("../../providers/index.ts").ContentPart[];
+  let content: string | ContentPart[];
   if (typeof m.content === "string") {
     content = m.content;
   } else {
-    content = m.content.map((block) => {
-      if (block.type === "text") return { type: "text", text: block.text ?? "" };
-      if (block.type === "image" && block.source) {
-        return { type: "image_url", imageUrl: { url: `data:${block.source.media_type};base64,${block.source.data}` } };
+    content = m.content.map((block): ContentPart => {
+      switch (block.type) {
+        case "text":
+          return { type: "text", text: block.text ?? "" };
+        case "image": {
+          const src = block.source;
+          if (src?.type === "url" && src.url !== undefined) {
+            return { type: "image_url", imageUrl: { url: src.url } };
+          }
+          if (src?.type === "base64" && src.media_type !== undefined && src.data !== undefined) {
+            return {
+              type: "image_url",
+              imageUrl: { url: `data:${src.media_type};base64,${src.data}` },
+            };
+          }
+          return { type: "raw", block: { ...block } };
+        }
+        case "tool_use":
+          return {
+            type: "tool_use",
+            id: block.id ?? "",
+            name: block.name ?? "",
+            input: block.input ?? {},
+          };
+        case "tool_result":
+          return {
+            type: "tool_result",
+            toolUseId: block.tool_use_id ?? "",
+            ...(block.content !== undefined ? { content: block.content } : {}),
+            ...(block.is_error !== undefined ? { isError: block.is_error } : {}),
+          };
+        default:
+          // thinking / redacted_thinking / document / server-tool blocks:
+          // keep verbatim so the Anthropic adapter replays them faithfully.
+          return { type: "raw", block: { ...block } };
       }
-      return { type: "text", text: "" };
     });
   }
   return { role: m.role, content };
@@ -80,11 +115,19 @@ export function anthropicError(type: string, message: string, extra?: Record<str
 function mapAnthropicRouteError(err: unknown): RenderedHttpError | null {
   if (err instanceof V1ChatError) {
     const type =
-      err.code === "missing_scope"
-        ? "permission_error"
-        : err.code === "customer_not_found"
-          ? "not_found_error"
-          : "invalid_request_error";
+      err.status === 401
+        ? "authentication_error"
+        : err.status === 403
+          ? "permission_error"
+          : err.status === 404
+            ? "not_found_error"
+            : err.status === 429
+              ? "rate_limit_error"
+              : err.status === 402
+                ? "billing_error"
+                : err.status >= 500
+                  ? "api_error"
+                  : "invalid_request_error";
     return {
       status: err.status,
       body: anthropicError(type, err.message),
@@ -135,19 +178,39 @@ function resolveModelAndRules(params: {
   );
 }
 
-function buildAnthropicChatRequest(
+function systemToText(system: string | readonly unknown[]): string {
+  if (typeof system === "string") return system;
+  const parts: string[] = [];
+  for (const item of system) {
+    if (typeof item === "string") {
+      parts.push(item);
+    } else if (item && typeof item === "object") {
+      const b = item as Record<string, unknown>;
+      if (typeof b.text === "string") parts.push(b.text);
+    }
+  }
+  return parts.join("\n\n");
+}
+
+export function buildAnthropicChatRequest(
   body: typeof AnthropicMessagesBody.Type,
   stream: boolean,
 ): ChatRequest {
   const messages: ChatMessage[] = body.messages.map(translateAnthropicMessage);
-  if (body.system) {
-    const sysText =
-      typeof body.system === "string" ? body.system : JSON.stringify(body.system);
-    messages.unshift({ role: "system", content: sysText });
-  }
   return {
     model: body.model,
     messages,
+    // Structured carrier: text for estimation / OpenAI-shaped upstreams,
+    // original blocks (cache_control breakpoints intact) for Anthropic
+    // upstreams — prompt caching only hits when breakpoints survive.
+    ...(body.system
+      ? {
+          system: {
+            text: systemToText(body.system),
+            ...(typeof body.system === "string" ? {} : { blocks: [...body.system] }),
+          },
+        }
+      : {}),
     stream,
     maxTokens: body.max_tokens,
     temperature: body.temperature,
@@ -155,18 +218,54 @@ function buildAnthropicChatRequest(
     tools: body.tools ? [...body.tools] : undefined,
     toolChoice: body.tool_choice,
     stop: body.stop_sequences ? [...body.stop_sequences] : undefined,
+    extra: pickAnthropicExtras(body),
   };
 }
 
-function anthropicMessageJson(
+/**
+ * Effective completion window for preflight reservation. When extended
+ * thinking is enabled the upstream window is `max_tokens` OR
+ * `budget_tokens + 4096` (the adapter's inflation margin), whichever is
+ * larger. Reserving against the effective window prevents a client from
+ * holding a tiny balance while the upstream generates a large reasoning
+ * budget — the reservation must cover what can actually be billed.
+ */
+export function effectiveAnthropicMaxTokens(
+  body: typeof AnthropicMessagesBody.Type,
+): number {
+  const thinking = body.thinking;
+  if (thinking && thinking.type === "enabled") {
+    return Math.max(body.max_tokens, Math.ceil(thinking.budget_tokens) + 4096);
+  }
+  return body.max_tokens;
+}
+
+/** Forward Anthropic params the shared ChatRequest does not model. */
+function pickAnthropicExtras(
+  body: typeof AnthropicMessagesBody.Type,
+): Record<string, unknown> | undefined {
+  const extra: Record<string, unknown> = {};
+  if (body.top_k !== undefined) extra.top_k = body.top_k;
+  if (body.thinking !== undefined) extra.thinking = body.thinking;
+  if (body.metadata !== undefined) extra.metadata = body.metadata;
+  if (body.service_tier !== undefined) extra.service_tier = body.service_tier;
+  if (body.container !== undefined) extra.container = body.container;
+  if (body.mcp_servers !== undefined) extra.mcp_servers = body.mcp_servers;
+  if (body.betas !== undefined) extra.betas = body.betas;
+  return Object.keys(extra).length > 0 ? extra : undefined;
+}
+
+export function anthropicMessageJson(
   result: GenerationCompleteResult,
   modelAlias: string,
 ) {
   const r = result.response;
   const choice = r.choices[0];
-  const textContent =
-    typeof choice?.message.content === "string" ? choice.message.content : "";
-  const contentBlocks: unknown[] = [{ type: "text", text: textContent }];
+  const contentBlocks: unknown[] = [];
+  const text = choice?.message.content;
+  if (typeof text === "string" && text.length > 0) {
+    contentBlocks.push({ type: "text", text });
+  }
   const toolCalls = choice?.message.toolCalls;
   if (Array.isArray(toolCalls)) {
     for (const tc of toolCalls) {
@@ -174,20 +273,21 @@ function anthropicMessageJson(
         id?: string;
         function?: { name?: string; arguments?: string };
       };
+      let input: unknown = {};
+      try {
+        input = JSON.parse(t.function?.arguments ?? "{}");
+      } catch {
+        input = {};
+      }
       contentBlocks.push({
         type: "tool_use",
         id: t.id ?? "",
         name: t.function?.name ?? "",
-        input: (() => {
-          try {
-            return JSON.parse(t.function?.arguments ?? "{}");
-          } catch {
-            return {};
-          }
-        })(),
+        input,
       });
     }
   }
+  if (contentBlocks.length === 0) contentBlocks.push({ type: "text", text: "" });
 
   return {
     id: r.id,
@@ -195,7 +295,7 @@ function anthropicMessageJson(
     role: "assistant" as const,
     model: modelAlias,
     content: contentBlocks,
-    stop_reason: choice?.finishReason ?? "end_turn",
+    stop_reason: toAnthropicStopReason(choice?.finishReason),
     stop_sequence: null,
     usage: {
       input_tokens: r.usage.promptTokens,
@@ -256,8 +356,8 @@ publicAnthropic.post("/v1/messages", async (c) => {
       orgId,
       ctx,
       aliasId: body.model,
-      estimatedPromptTokens: estimatePromptTokens(request.messages),
-      maxCompletionTokens: body.max_tokens,
+      estimatedPromptTokens: estimatePromptTokens(request.messages, request.system?.text),
+      maxCompletionTokens: effectiveAnthropicMaxTokens(body),
     });
     return {
       ctx,
@@ -284,9 +384,9 @@ publicAnthropic.post("/v1/messages", async (c) => {
           protocol: "anthropic",
           reservation: p.reservation,
           limitReservation: p.limitReservation,
-          reservedUnits: p.reservation?.reservedUnits ?? 0,
+          reservedMicros: p.reservation?.reservedMicros ?? 0,
           startedAtMs: Date.now(),
-          priceUnitsOverride:
+          priceMicrosOverride:
             p.ctx.kind === "management_internal" ? 0 : undefined,
           signal: abortSignal,
         });
@@ -319,10 +419,10 @@ publicAnthropic.post("/v1/messages", async (c) => {
 
   const { ctx, request, model, rules, reservation, limitReservation } =
     prepExit.value;
-  const reservedUnits = reservation?.reservedUnits ?? 0;
+  const reservedMicros = reservation?.reservedMicros ?? 0;
   const actor = actorForChatContext(ctx);
   const start = Date.now();
-  const priceUnitsOverride =
+  const priceMicrosOverride =
     ctx.kind === "management_internal" ? 0 : undefined;
 
   c.header("Content-Type", "text/event-stream");
@@ -340,16 +440,16 @@ publicAnthropic.post("/v1/messages", async (c) => {
     protocol: "anthropic",
     reservation,
     limitReservation,
-    reservedUnits,
+    reservedMicros,
     startedAtMs: start,
-    priceUnitsOverride,
+    priceMicrosOverride,
     signal: abortSignal,
   });
 
   let activeEntry: ModelEntryDoc | null = null;
   let activeProvider: ProviderDoc | null = null;
   const usage = emptyStreamUsage("anthropic");
-  let blockStarted = false;
+  const blocks = new AnthropicBlockStream();
   let terminalErrorEmitted = false;
   let clientDisconnected = false;
 
@@ -372,9 +472,35 @@ publicAnthropic.post("/v1/messages", async (c) => {
         }
       };
       const closeOpenBlock = () => {
-        if (!blockStarted) return;
-        enqueue("content_block_stop", { type: "content_block_stop", index: 0 });
-        blockStarted = false;
+        const idx = blocks.closeOpen();
+        if (idx !== null) {
+          enqueue("content_block_stop", { type: "content_block_stop", index: idx });
+        }
+      };
+      const emitBlockStart = (
+        index: number,
+        kind: "text" | "thinking" | "tool_use",
+        tool?: { id: string; name: string },
+      ) => {
+        const contentBlock =
+          kind === "tool_use"
+            ? { type: "tool_use", id: tool?.id ?? "", name: tool?.name ?? "", input: {} }
+            : kind === "thinking"
+              ? { type: "thinking", thinking: "", signature: "" }
+              : { type: "text", text: "" };
+        enqueue("content_block_start", {
+          type: "content_block_start",
+          index,
+          content_block: contentBlock,
+        });
+      };
+      const ensureBlock = (kind: "text" | "thinking") => {
+        const t = blocks.transition(kind);
+        for (const idx of t.close) {
+          enqueue("content_block_stop", { type: "content_block_stop", index: idx });
+        }
+        for (const s of t.start) emitBlockStart(s.index, s.kind);
+        return t.index;
       };
       const enqueueTerminalError = (type: string, message: string) => {
         if (terminalErrorEmitted || clientDisconnected) return;
@@ -417,12 +543,8 @@ publicAnthropic.post("/v1/messages", async (c) => {
             usage: { input_tokens: 0, output_tokens: 0 },
           },
         });
-        enqueue("content_block_start", {
-          type: "content_block_start",
-          index: 0,
-          content_block: { type: "text", text: "" },
-        });
-        blockStarted = true;
+        // Blocks open lazily on first delta so tool-only responses never
+        // emit a phantom empty text block.
 
         for await (const event of session.iterate()) {
           if (clientDisconnected || abortSignal.aborted) {
@@ -445,18 +567,39 @@ publicAnthropic.post("/v1/messages", async (c) => {
           session.noteChunk(entry.id, chunk);
           if (chunk.type === "delta") {
             if (chunk.delta?.content !== undefined) {
+              const index = ensureBlock("text");
               enqueue("content_block_delta", {
                 type: "content_block_delta",
-                index: 0,
+                index,
                 delta: { type: "text_delta", text: chunk.delta.content },
               });
             }
             if (chunk.delta?.reasoning !== undefined) {
+              const index = ensureBlock("thinking");
               enqueue("content_block_delta", {
                 type: "content_block_delta",
-                index: 0,
+                index,
                 delta: { type: "thinking_delta", thinking: chunk.delta.reasoning },
               });
+            }
+            if (chunk.delta?.toolCalls !== undefined) {
+              const instr = anthropicToolInstructions(
+                blocks,
+                chunk.delta.toolCalls as Record<string, unknown>[],
+              );
+              for (const idx of instr.close) {
+                enqueue("content_block_stop", { type: "content_block_stop", index: idx });
+              }
+              for (const s of instr.start) {
+                emitBlockStart(s.index, "tool_use", { id: s.id, name: s.name });
+              }
+              for (const j of instr.json) {
+                enqueue("content_block_delta", {
+                  type: "content_block_delta",
+                  index: j.index,
+                  delta: { type: "input_json_delta", partial_json: j.partial },
+                });
+              }
             }
           } else if (chunk.type === "done") {
             applyDoneUsage(usage, chunk);
@@ -479,7 +622,7 @@ publicAnthropic.post("/v1/messages", async (c) => {
           closeOpenBlock();
           enqueue("message_delta", {
             type: "message_delta",
-            delta: { stop_reason: usage.finishReason, stop_sequence: null },
+            delta: { stop_reason: toAnthropicStopReason(usage.finishReason), stop_sequence: null },
             usage: { output_tokens: usage.completionTokens },
           });
           enqueue("message_stop", { type: "message_stop" });

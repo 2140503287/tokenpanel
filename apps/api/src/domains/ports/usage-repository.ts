@@ -9,16 +9,16 @@ export type UsageByModelRow = {
   readonly modelAliasId: string;
   readonly requests: number;
   readonly tokens: number;
-  readonly costUnits: number;
-  readonly priceUnits: number;
+  readonly costMicros: number;
+  readonly priceMicros: number;
   readonly currency: string;
 };
 
 export type CustomerUsageSummary = {
   readonly totalRequests: number;
   readonly totalTokens: number;
-  readonly totalCostUnits: number;
-  readonly totalPriceUnits: number;
+  readonly totalCostMicros: number;
+  readonly totalPriceMicros: number;
   readonly currency: string;
   readonly byModel: readonly Omit<UsageByModelRow, "currency">[];
 };
@@ -27,17 +27,25 @@ export type AnalyticsCurrencyTotals = {
   readonly currency: string;
   readonly requests: number;
   readonly tokens: number;
-  readonly costUnits: number;
-  readonly priceUnits: number;
+  readonly promptTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly reasoningTokens: number;
+  readonly costMicros: number;
+  readonly priceMicros: number;
 };
 
 export type AnalyticsTopCustomer = {
   readonly customerId: HexId;
   readonly currency: string;
+  readonly promptTokens: number;
   readonly requests: number;
   readonly tokens: number;
-  readonly costUnits: number;
-  readonly priceUnits: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  readonly reasoningTokens: number;
+  readonly costMicros: number;
+  readonly priceMicros: number;
 };
 
 export type DashboardSummary = {

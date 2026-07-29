@@ -11,13 +11,13 @@ import type { RenderedHttpError } from "./types.ts";
 import { emptyHeaders, withRetryAfter } from "./types.ts";
 
 export type OpenAIErrorType =
-  | "rate_limit_error"
-  | "billing_error"
   | "invalid_request_error"
   | "authentication_error"
   | "permission_error"
   | "not_found_error"
-  | "api_error";
+  | "rate_limit_error"
+  | "api_error"
+  | "overloaded_error";
 
 /**
  * Same mapping as routes/public/openai.ts formatOpenAIError.
@@ -27,6 +27,7 @@ export function formatOpenAIErrorBody(
   code: string,
   message: string,
   extra?: Record<string, unknown>,
+  status?: number,
 ): {
   error: {
     message: string;
@@ -35,12 +36,23 @@ export function formatOpenAIErrorBody(
     [key: string]: unknown;
   };
 } {
+  // OpenAI API reference error types, keyed by HTTP status. `billing_error`
+  // is NOT an OpenAI type — quota/balance issues ride invalid_request_error
+  // with a descriptive `code`.
   const type =
-    code === "rate_limited"
-      ? "rate_limit_error"
-      : code === "insufficient_balance"
-        ? "billing_error"
-        : "invalid_request_error";
+    status === 401
+      ? "authentication_error"
+      : status === 403
+        ? "permission_error"
+        : status === 404
+          ? "not_found_error"
+          : status === 429
+            ? "rate_limit_error"
+            : status !== undefined && status >= 500
+              ? "api_error"
+              : code === "rate_limited"
+                ? "rate_limit_error"
+                : "invalid_request_error";
   return {
     error: {
       message,
@@ -54,9 +66,11 @@ export function formatOpenAIErrorBody(
 function openAITypeForAppError(err: AppError): OpenAIErrorType {
   switch (err._tag) {
     case "RateLimitExceededError":
+    case "BudgetExceededError":
       return "rate_limit_error";
     case "InsufficientBalanceError":
-      return "billing_error";
+      // No billing_error in the OpenAI enum; code carries the detail.
+      return "invalid_request_error";
     case "AuthenticationError":
       return "authentication_error";
     case "AuthorizationError":
@@ -65,8 +79,10 @@ function openAITypeForAppError(err: AppError): OpenAIErrorType {
       return "not_found_error";
     case "ValidationError":
       return "invalid_request_error";
+    case "ProviderUnavailableError":
+      return err.code === "no_active_entries" ? "overloaded_error" : "api_error";
     default:
-      return "invalid_request_error";
+      return "api_error";
   }
 }
 
@@ -159,8 +175,8 @@ function extraFor(err: AppError): Record<string, unknown> | undefined {
   }
   if (err._tag === "InsufficientBalanceError") {
     const extra: Record<string, unknown> = {};
-    if (err.balanceUnits !== undefined) extra.balanceUnits = err.balanceUnits;
-    if (err.requiredUnits !== undefined) extra.requiredUnits = err.requiredUnits;
+    if (err.balanceMicros !== undefined) extra.balanceMicros = err.balanceMicros;
+    if (err.requiredMicros !== undefined) extra.requiredMicros = err.requiredMicros;
     if (err.currency !== undefined) extra.currency = err.currency;
     return Object.keys(extra).length > 0 ? extra : undefined;
   }
@@ -173,18 +189,10 @@ function extraFor(err: AppError): Record<string, unknown> | undefined {
 export function renderOpenAIError(err: AppError): RenderedHttpError {
   const code = publicCode(err);
   const message = publicMessageForCode(code, err.message);
-  const type = openAITypeForAppError(err);
-  // Keep formatOpenAIError type mapping for rate_limited / insufficient_balance
-  // even when openAITypeForAppError is more precise — wire compatibility first.
-  const body = formatOpenAIErrorBody(code, message, extraFor(err));
-  // Override type for auth-ish codes when formatOpenAIError would force invalid_request
-  if (type === "authentication_error" || type === "permission_error") {
-    body.error.type =
-      type === "authentication_error"
-        ? "invalid_request_error"
-        : "invalid_request_error";
-  }
-  void type;
+  const status = statusForOpenAI(err);
+  const body = formatOpenAIErrorBody(code, message, extraFor(err), status);
+  // Precise AppError mapping wins over the status-derived default.
+  body.error.type = openAITypeForAppError(err);
 
   let headers = emptyHeaders();
   if (err._tag === "RateLimitExceededError") {
@@ -195,7 +203,7 @@ export function renderOpenAIError(err: AppError): RenderedHttpError {
   }
 
   return {
-    status: statusForOpenAI(err),
+    status,
     body,
     headers,
   };
@@ -207,6 +215,8 @@ export function renderOpenAIDefect(): RenderedHttpError {
     body: formatOpenAIErrorBody(
       "internal_error",
       SAFE_MESSAGES.internal_server_error,
+      undefined,
+      500,
     ),
     headers: emptyHeaders(),
   };

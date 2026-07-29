@@ -20,6 +20,18 @@ function baseForm(over: Partial<FormState> = {}): FormState {
     status: "none",
     inputUnits: "0",
     outputUnits: "0",
+    reasoningUnits: "",
+    cacheReadUnits: "",
+    cacheWriteUnits: "",
+    inputAudioUnits: "",
+    outputAudioUnits: "",
+    costInputUnits: "",
+    costOutputUnits: "",
+    costReasoningUnits: "",
+    costCacheReadUnits: "",
+    costCacheWriteUnits: "",
+    costInputAudioUnits: "",
+    costOutputAudioUnits: "",
     currency: "USD",
     marginBps: "0",
     firstProviderId: "p1",
@@ -73,8 +85,8 @@ test("formFromFetched: maps all fields, keeps currency/marginBps/firstProviderId
   expect(f.inputModalities).toBe("text, image");
   expect(f.outputModalities).toBe("text");
   expect(f.status).toBe("beta");
-  expect(f.inputUnits).toBe("300");
-  expect(f.outputUnits).toBe("1500");
+  expect(f.costInputUnits).toBe("3"); // 300 cents/M → 3 USD/M wholesale cost
+  expect(f.costOutputUnits).toBe("15"); // 1500 cents/M → 15 USD/M wholesale cost
   expect(f.firstUpstreamModelId).toBe("openai/gpt-5");
   // preserved from base
   expect(f.currency).toBe("EUR");
@@ -82,12 +94,12 @@ test("formFromFetched: maps all fields, keeps currency/marginBps/firstProviderId
   expect(f.firstProviderId).toBe("p9");
 });
 
-test("formFromFetched: no cost → keeps base price", () => {
+test("formFromFetched: no cost → keeps base cost fields", () => {
   const m = mkModel();
   delete m.cost;
-  const f = formFromFetched(m, baseForm({ inputUnits: "5", outputUnits: "9" }));
-  expect(f.inputUnits).toBe("5");
-  expect(f.outputUnits).toBe("9");
+  const f = formFromFetched(m, baseForm({ costInputUnits: "5", costOutputUnits: "9" }));
+  expect(f.costInputUnits).toBe("5");
+  expect(f.costOutputUnits).toBe("9");
 });
 
 test("formFromFetched: missing optional caps default false, status undefined -> none", () => {

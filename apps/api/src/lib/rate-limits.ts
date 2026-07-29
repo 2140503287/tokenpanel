@@ -61,7 +61,7 @@ export type CheckLimitsParams = {
   customerId: ObjectId;
   rules: RateLimitRule[];
   estimatedTokens?: number | undefined;
-  estimatedSpendUnits?: number | undefined;
+  estimatedSpendMicros?: number | undefined;
   /** ISO currency for spend_units rules (skipped on mismatch). */
   currency?: string | undefined;
   modelAliasId?: string | undefined;
@@ -79,7 +79,7 @@ export type RecordUsageParams = {
   usage: {
     tokens: number;
     requests: number;
-    spendUnits: number;
+    spendMicros: number;
     currency: string;
     modelAliasId?: string | undefined;
   };
@@ -111,7 +111,7 @@ export type ReserveLimitsParams = {
   readonly customerId: ObjectId;
   readonly rules: readonly RateLimitRule[];
   readonly estimatedTokens?: number | undefined;
-  readonly estimatedSpendUnits?: number | undefined;
+  readonly estimatedSpendMicros?: number | undefined;
   /** ISO currency for spend_units rules (skipped on mismatch). */
   readonly currency?: string | undefined;
   readonly modelAliasId?: string | undefined;
@@ -133,7 +133,7 @@ export type SettleLimitsParams = {
 export type EnforceParams = {
   customerId: ObjectId;
   estimatedTokens?: number | undefined;
-  estimatedSpendUnits?: number | undefined;
+  estimatedSpendMicros?: number | undefined;
   currency?: string | undefined;
   modelAliasId?: string | undefined;
 };
@@ -165,8 +165,9 @@ export function ruleIncrement(
     case "requests":
       return 1;
     case "spend_units":
+    case "spend_micros":
       // Org is single-currency; all spend counts toward the same stream.
-      return usage.spendUnits;
+      return usage.spendMicros;
   }
 }
 
@@ -179,7 +180,7 @@ export function estimatedRuleIncrement(
   rule: RateLimitRule,
   estimates: {
     readonly estimatedTokens?: number | undefined;
-    readonly estimatedSpendUnits?: number | undefined;
+    readonly estimatedSpendMicros?: number | undefined;
     readonly currency?: string | undefined;
   },
 ): number {
@@ -189,7 +190,8 @@ export function estimatedRuleIncrement(
     case "requests":
       return 1;
     case "spend_units":
-      return Math.max(0, estimates.estimatedSpendUnits ?? 0);
+    case "spend_micros":
+      return Math.max(0, estimates.estimatedSpendMicros ?? 0);
   }
 }
 
@@ -201,7 +203,7 @@ export function estimatedRuleIncrement(
 export function allowsCapOvershoot(
   dimension: RateLimitRule["dimension"],
 ): boolean {
-  return dimension === "spend_units";
+  return dimension === "spend_units" || dimension === "spend_micros";
 }
 
 /** Remaining room under a hard cap given current window sum. Never negative. */
@@ -406,7 +408,7 @@ export const checkLimits = (
       customerId,
       rules,
       estimatedTokens,
-      estimatedSpendUnits,
+      estimatedSpendMicros,
       currency,
       modelAliasId,
     } = params;
@@ -420,7 +422,7 @@ export const checkLimits = (
 
       const increment = estimatedRuleIncrement(rule, {
         estimatedTokens,
-        estimatedSpendUnits,
+        estimatedSpendMicros,
         currency,
       });
       // Zero-estimate token/spend rules are skipped at admission (nothing to
@@ -473,7 +475,7 @@ type PlannedHold = {
 function planHolds(params: {
   rules: readonly RateLimitRule[];
   estimatedTokens?: number | undefined;
-  estimatedSpendUnits?: number | undefined;
+  estimatedSpendMicros?: number | undefined;
   currency?: string | undefined;
   modelAliasId?: string | undefined;
   nowMs: number;
@@ -485,7 +487,7 @@ function planHolds(params: {
     if (target === undefined) continue;
     const increment = estimatedRuleIncrement(rule, {
       estimatedTokens: params.estimatedTokens,
-      estimatedSpendUnits: params.estimatedSpendUnits,
+      estimatedSpendMicros: params.estimatedSpendMicros,
       currency: params.currency,
     });
     if (increment <= 0) continue;
@@ -520,7 +522,7 @@ export const reserveLimits = (
     const planned = planHolds({
       rules: params.rules,
       estimatedTokens: params.estimatedTokens,
-      estimatedSpendUnits: params.estimatedSpendUnits,
+      estimatedSpendMicros: params.estimatedSpendMicros,
       currency: params.currency,
       modelAliasId: params.modelAliasId,
       nowMs,
@@ -541,7 +543,7 @@ export const reserveLimits = (
         customerId: params.customerId,
         rules: [...params.rules],
         estimatedTokens: params.estimatedTokens,
-        estimatedSpendUnits: params.estimatedSpendUnits,
+        estimatedSpendMicros: params.estimatedSpendMicros,
         currency: params.currency,
         modelAliasId: params.modelAliasId,
         nowMs,
@@ -931,7 +933,7 @@ export const enforce = (
     const {
       customerId,
       estimatedTokens,
-      estimatedSpendUnits,
+      estimatedSpendMicros,
       currency,
       modelAliasId,
     } = params;
@@ -941,7 +943,7 @@ export const enforce = (
       customerId,
       rules,
       estimatedTokens,
-      estimatedSpendUnits,
+      estimatedSpendMicros,
       currency,
       modelAliasId,
     });
@@ -993,7 +995,8 @@ export function parseLimitReservation(params: {
     if (
       o.dimension !== "tokens" &&
       o.dimension !== "requests" &&
-      o.dimension !== "spend_units"
+      o.dimension !== "spend_units" &&
+      o.dimension !== "spend_micros"
     ) {
       continue;
     }

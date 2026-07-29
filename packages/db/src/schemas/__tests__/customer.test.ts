@@ -19,7 +19,7 @@ test("customerDoc applies defaults: balance 0 USD, status active, metadata {}", 
     createdAt: new Date(),
     updatedAt: new Date(),
   });
-  expect(r.balance).toEqual({ amountUnits: 0, reservedUnits: 0, currency: "USD" });
+  expect(r.balance).toEqual({ amountMicros: 0, reservedMicros: 0, currency: "USD" });
   expect(r.status).toBe("active");
   expect(r.metadata).toEqual({});
   expect(r.externalId).toBeUndefined();
@@ -79,7 +79,7 @@ test("customerUpdateInput allows nullish externalId/email", () => {
   expect(customerUpdateInput.safeParse({ status: "deleted" }).success).toBe(false);
 });
 
-test("balanceAdjustmentDoc requires amountUnits int (any sign), currency, reason enum", () => {
+test("balanceAdjustmentDoc requires amountMicros int (any sign), currency, reason enum", () => {
   const base = {
     _id: new ObjectId(),
     organizationId: new ObjectId(),
@@ -89,17 +89,17 @@ test("balanceAdjustmentDoc requires amountUnits int (any sign), currency, reason
     createdAt: new Date(),
     updatedAt: new Date(),
   };
-  expect(balanceAdjustmentDoc.safeParse({ ...base, amountUnits: 1000, reason: "topup" }).success).toBe(true);
-  expect(balanceAdjustmentDoc.safeParse({ ...base, amountUnits: -500, reason: "usage_debit" }).success).toBe(true);
-  expect(balanceAdjustmentDoc.safeParse({ ...base, amountUnits: 1000, reason: "bonus" }).success).toBe(false);
-  expect(balanceAdjustmentDoc.safeParse({ ...base, amountUnits: 1.5, reason: "topup" }).success).toBe(false);
-  expect(balanceAdjustmentDoc.safeParse({ ...base, amountUnits: 1000, reason: "topup", currency: "us" }).success).toBe(false);
+  expect(balanceAdjustmentDoc.safeParse({ ...base, amountMicros: 10_000_000, reason: "topup" }).success).toBe(true);
+  expect(balanceAdjustmentDoc.safeParse({ ...base, amountMicros: -5_000_000, reason: "usage_debit" }).success).toBe(true);
+  expect(balanceAdjustmentDoc.safeParse({ ...base, amountMicros: 10_000_000, reason: "bonus" }).success).toBe(false);
+  expect(balanceAdjustmentDoc.safeParse({ ...base, amountMicros: 1.5, reason: "topup" }).success).toBe(false);
+  expect(balanceAdjustmentDoc.safeParse({ ...base, amountMicros: 10_000_000, reason: "topup", currency: "us" }).success).toBe(false);
 });
 
 test("balanceAdjustmentCreateInput coerces occurredAt from string", () => {
   const r = balanceAdjustmentCreateInput.parse({
     customerId: orgId(),
-    amountUnits: 1000,
+    amountMicros: 10_000_000,
     currency: "USD",
     reason: "topup",
     occurredAt: "2026-01-01T00:00:00.000Z",
@@ -110,7 +110,7 @@ test("balanceAdjustmentCreateInput coerces occurredAt from string", () => {
 test("balanceAdjustmentCreateInput reason enum", () => {
   const b = {
     customerId: orgId(),
-    amountUnits: 100,
+    amountMicros: 1_000_000,
     currency: "USD",
   };
   for (const reason of ["topup", "usage_debit", "refund", "adjustment", "overage"]) {

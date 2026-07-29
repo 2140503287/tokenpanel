@@ -434,20 +434,13 @@ cmd_update() {
     return $?
   fi
 
-  # ── Phase 2: BACKUP ──
-  step "2/7" "creating backup..."
-  local backup_file
-  backup_file="$(create_backup "pre-update")" \
-    || die "backup failed — aborting (app unchanged; manager refreshed)"
-  ok "backup ready: $(basename "$backup_file")"
-
-  # ── Phase 3: BUILD ──
-  step "3/7" "building new image..."
-  build_update_image || die "build failed — aborting (old container still serving, backup available)"
+  # ── Phase 2: BUILD ──
+  step "2/7" "building new image..."
+  build_update_image || die "build failed — aborting (old container still serving)"
   ok "new image built and tagged"
 
-  # ── Phase 4: CONFIG RECONCILE ──
-  step "4/7" "reconciling configuration with target release..."
+  # ── Phase 3: CONFIG RECONCILE ──
+  step "3/7" "reconciling configuration with target release..."
   ensure_operator_config "$NEW_IMAGE_TAG" \
     || die "operator config migration failed — old container still serving"
   snapshot_config >/dev/null || die "could not snapshot current config"
@@ -455,30 +448,90 @@ cmd_update() {
     || die "config render failed — old container still serving; snapshot available"
   ok "configuration rendered to $GENERATED_DIR"
 
-  # ── Phase 5: PRE-MIGRATE ──
-  step "5/7" "running pre-deploy migrations from new image (old container still serving)..."
-  run_migrations_image "pre" "$NEW_IMAGE_TAG" || die "pre-migration failed — aborting (old container serving, db rolled back per-txn, backup available)"
+  # ── Phase 4: PRE-MIGRATE ──
+  # Additive only (SafeMigrate lint enforces): adds *Micros beside *Units, never
+  # drops/renames. Old container keeps serving; a failure aborts with the DB in
+  # a valid dual-field state and old code unaffected.
+  step "4/7" "running pre-deploy migrations from new image (old container still serving)..."
+  run_migrations_image "pre" "$NEW_IMAGE_TAG" \
+    || die "pre-migration failed — aborting (old container serving, db consistent, re-run to retry)"
   ok "pre-deploy migrations applied (from tokenpanel/app:${NEW_IMAGE_TAG})"
 
   # Only now may Compose's `current` tag move. A failed pre migration above
   # leaves current pointing at the known-good image for starts/reboots.
   promote_new_image_current || die "could not promote new image — aborting (old container serving)"
 
-  # ── Phase 6: SWAP ──
-  step "6/7" "swapping to new container..."
-  swap_containers || die "swap failed — see rollback output above"
-  ok "new container is live and healthy"
+  # ── DOWNTIME WINDOW ─────────────────────────────────────────────────────────
+  # From here the API is stopped. The destructive post migration runs with no
+  # concurrent readers/writers, and the cutover backup is taken write-quiet so a
+  # restore loses nothing (no traffic is served between backup and any restore).
+  # Total downtime ≈ backup + post + start (tens of seconds).
+  step "5/7" "stopping old container (downtime begins)..."
+  docker compose -f "$APP_YML" stop api || die "could not stop api — aborting (db unchanged)"
+  ok "old container stopped"
 
-  # ── Phase 7: POST-MIGRATE ──
-  step "7/7" "running post-deploy migrations..."
-  run_migrations "post" || {
-    err "post-migration failed!"
-    err "new code is live but some destructive migrations may not have applied."
-    err "check 'tokenpanel logs' and 'tokenpanel doctor'."
-    err "if needed, restore from backup: tokenpanel restore $backup_file"
-    return 1
+  # Write-quiet backup: create_backup detects the api is already down and dumps
+  # without restarting it. This snapshot is the restore point for the window.
+  step "6/7" "creating write-quiet cutover backup..."
+  local backup_file
+  backup_file="$(create_backup "pre-update")" || {
+    err "cutover backup failed — restarting old container and aborting"
+    docker compose -f "$APP_YML" start api >/dev/null 2>&1 || true
+    die "backup failed — old container restarted, db unchanged"
   }
+  ok "backup ready: $(basename "$backup_file")"
+
+  # Destructive post migration with one automatic retry (idempotent via
+  # _migrations). On a second failure: restore the cutover backup, roll the
+  # image back to :previous, and restart the old container — landing exactly on
+  # the pre-update state with zero data loss.
+  step "7/7" "running post-deploy migrations (from new image)..."
+  if ! run_migrations_image "post" "$NEW_IMAGE_TAG"; then
+    warn "post-migration failed — retrying once (idempotent)..."
+    if ! run_migrations_image "post" "$NEW_IMAGE_TAG"; then
+      err "post-migration failed twice — initiating automatic recovery"
+      local rec_rc=0
+      restore_backup_auto "$backup_file" || rec_rc=$?
+      if [ "$rec_rc" -eq 2 ]; then
+        err "database may be PARTIALLY restored — manual intervention required"
+        err "recover: tokenpanel restore \"$backup_file\""
+        return 1
+      fi
+      if [ "$rec_rc" -ne 0 ]; then
+        err "auto-restore failed — restarting old container on current database"
+        docker compose -f "$APP_YML" start api >/dev/null 2>&1 || true
+        die "recovery incomplete — inspect: tokenpanel doctor"
+      fi
+      # DB restored to the dual-field pre-update state; roll the image back and
+      # serve old code on top of it.
+      rollback_to_previous || err "image rollback failed — start manually: tokenpanel start"
+      die "update aborted — rolled back to previous version, no data lost"
+    fi
+  fi
   ok "post-deploy migrations applied"
+
+  # Start the new container now that the schema is fully migrated.
+  step "swap" "starting new container..."
+  docker compose -f "$APP_YML" up -d --no-deps --force-recreate api
+  if ! wait_for_health api 180; then
+    err "new container failed health check — initiating automatic recovery"
+    docker compose -f "$APP_YML" stop api 2>/dev/null || true
+    local rec_rc=0
+    restore_backup_auto "$backup_file" || rec_rc=$?
+    if [ "$rec_rc" -eq 2 ]; then
+      err "database may be PARTIALLY restored — manual intervention required"
+      err "recover: tokenpanel restore \"$backup_file\""
+      return 1
+    fi
+    if [ "$rec_rc" -ne 0 ]; then
+      err "auto-restore failed — manual intervention required"
+      die "recovery incomplete — inspect: tokenpanel doctor"
+    fi
+    rollback_to_previous || err "image rollback failed — start manually: tokenpanel start"
+    die "update aborted — rolled back to previous version, no data lost"
+  fi
+  ok "new container is live and healthy"
+  # ── END DOWNTIME WINDOW ──────────────────────────────────────────────────────
 
   cleanup_old_images
 

@@ -3,8 +3,8 @@
  * Corrupt/legacy docs → PersistenceDataError; never trusted casts.
  *
  * Read path always runs {@link normalizeLegacyMoneyFields} first so documents
- * still carrying pre-rename *Minor keys decode under *Units schemas during
- * the swap→post migration window (and as a permanent no-op after post/).
+ * still carrying pre-rename *Minor/*Units keys decode under *Micros schemas
+ * during the swap→post migration window (and as a permanent no-op after post/).
  */
 import { Effect, Either, ParseResult, Schema } from "effect";
 import { normalizeLegacyMoneyFields } from "@tokenpanel/db";

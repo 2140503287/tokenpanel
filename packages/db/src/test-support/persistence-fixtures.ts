@@ -121,7 +121,7 @@ export function customerFixture(over: Partial<CustomerDoc> = {}): CustomerDoc {
     externalId: "ext-1",
     name: "Bob Corp",
     email: "bob@corp.com",
-    balance: { amountUnits: 10_000, reservedUnits: 0, currency: "USD" },
+    balance: { amountMicros: 100_000_000, reservedMicros: 0, currency: "USD" },
     status: "active",
     metadata: {},
     createdAt: d(),
@@ -146,7 +146,7 @@ export function balanceAdjustmentFixture(
     _id: fixObjectId(FIXTURE_IDS.adjustment),
     organizationId: fixObjectId(FIXTURE_IDS.org),
     customerId: fixObjectId(FIXTURE_IDS.customer),
-    amountUnits: 1000,
+    amountMicros: 10_000_000,
     currency: "USD",
     reason: "topup",
     usageRecordId: null,
@@ -220,7 +220,7 @@ export function modelFixture(over: Partial<ModelDoc> = {}): ModelDoc {
     attachment: false,
     limits: { context: 128000 },
     modalities: { input: ["text"], output: ["text"] },
-    price: { inputUnitsPerMillion: 300, outputUnitsPerMillion: 600 },
+    price: { inputMicrosPerMillion: 3_000_000, outputMicrosPerMillion: 6_000_000 },
     marginBps: 0,
     currency: "USD",
     active: true,
@@ -239,10 +239,10 @@ export function subscriptionPlanFixture(
     organizationId: fixObjectId(FIXTURE_IDS.org),
     name: "Pro",
     description: null,
-    price: { amountUnits: 2000, currency: "USD" },
+    price: { amountMicros: 20_000_000, currency: "USD" },
     interval: "month",
     intervalCount: 1,
-    includedCredit: { amountUnits: 1000, currency: "USD" },
+    includedCredit: { amountMicros: 10_000_000, currency: "USD" },
     includedTokens: 0,
     rateLimits: [
       {
@@ -309,7 +309,7 @@ export function budgetFixture(over: Partial<BudgetDoc> = {}): BudgetDoc {
     customerId: fixObjectId(FIXTURE_IDS.customer),
     periodStart: d("2026-01-01T00:00:00.000Z"),
     periodEnd: d("2026-02-01T00:00:00.000Z"),
-    amountUnits: 50_000,
+    amountMicros: 500_000_000,
     currency: "USD",
     alertThresholds: [50, 80, 100],
     createdAt: d(),
@@ -339,8 +339,8 @@ export function usageRecordFixture(
     cacheReadTokens: 0,
     cacheWriteTokens: 0,
     totalTokens: 150,
-    costUnits: 5,
-    priceUnits: 10,
+    costMicros: 50_000,
+    priceMicros: 100_000,
     currency: "USD",
     providerRequestId: "req_abc",
     gatewayRequestId: "gw_abc",
@@ -360,8 +360,8 @@ export type UsageByModelProjection = {
   modelAliasId: string;
   requests: number;
   tokens: number;
-  costUnits: number;
-  priceUnits: number;
+  costMicros: number;
+  priceMicros: number;
 };
 
 export function usageByModelProjectionFixture(
@@ -371,8 +371,8 @@ export function usageByModelProjectionFixture(
     modelAliasId: "my-gpt",
     requests: 12,
     tokens: 3400,
-    costUnits: 40,
-    priceUnits: 80,
+    costMicros: 400_000,
+    priceMicros: 800_000,
     ...over,
   };
 }
@@ -446,7 +446,7 @@ export function settlementOutboxFixture(
     providerRequestId: "req_up",
     context: {
       actorKind: "customer_key",
-      priceUnits: 10,
+      priceMicros: 100_000,
     },
     status: "pending",
     attempts: 0,

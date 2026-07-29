@@ -108,14 +108,14 @@ describe("pure rate-limit helpers", () => {
   });
 
   test("ruleIncrement per dimension", () => {
-    const usage = { tokens: 500, requests: 1, spendUnits: 200, currency: "USD" };
+    const usage = { tokens: 500, requests: 1, spendMicros: 200, currency: "USD" };
     expect(ruleIncrement(rule({ dimension: "tokens" }), usage)).toBe(500);
     expect(ruleIncrement(rule({ dimension: "requests" }), usage)).toBe(1);
     expect(ruleIncrement(rule({ dimension: "spend_units" }), usage)).toBe(200);
   });
 
   test("ruleIncrement spend_units always counts (org single-currency)", () => {
-    const usage = { tokens: 0, requests: 1, spendUnits: 200, currency: "USD" };
+    const usage = { tokens: 0, requests: 1, spendMicros: 200, currency: "USD" };
     expect(ruleIncrement(rule({ dimension: "spend_units" }), usage)).toBe(200);
   });
 
@@ -137,7 +137,7 @@ describe("pure rate-limit helpers", () => {
     ).toBe(1);
     expect(
       estimatedRuleIncrement(rule({ dimension: "spend_units" }), {
-        estimatedSpendUnits: 50,
+        estimatedSpendMicros: 50,
         currency: "USD",
       }),
     ).toBe(50);
@@ -340,10 +340,10 @@ describe("getEffectiveRules (repo-backed)", () => {
             organizationId: new ObjectId(),
             name: "p",
             description: null,
-            price: { amountUnits: 0, currency: "USD" },
+            price: { amountMicros: 0, currency: "USD" },
             interval: "month",
             intervalCount: 1,
-            includedCredit: { amountUnits: 0, currency: "USD" },
+            includedCredit: { amountMicros: 0, currency: "USD" },
             includedTokens: 0,
             rateLimits: planRules,
             active: true,
@@ -390,10 +390,10 @@ describe("getEffectiveRules (repo-backed)", () => {
             organizationId: new ObjectId(),
             name: "p",
             description: null,
-            price: { amountUnits: 0, currency: "USD" },
+            price: { amountMicros: 0, currency: "USD" },
             interval: "month",
             intervalCount: 1,
-            includedCredit: { amountUnits: 0, currency: "USD" },
+            includedCredit: { amountMicros: 0, currency: "USD" },
             includedTokens: 0,
             rateLimits: planRules,
             active: true,
@@ -442,10 +442,10 @@ describe("getEffectiveRules (repo-backed)", () => {
             organizationId: new ObjectId(),
             name: "p",
             description: null,
-            price: { amountUnits: 0, currency: "USD" },
+            price: { amountMicros: 0, currency: "USD" },
             interval: "month",
             intervalCount: 1,
-            includedCredit: { amountUnits: 0, currency: "USD" },
+            includedCredit: { amountMicros: 0, currency: "USD" },
             includedTokens: 0,
             rateLimits: [
               rule({ id: "a", windowSeconds: 3600, capValue: 5000 }),
@@ -579,7 +579,7 @@ describe("recordUsage (repo-backed)", () => {
         organizationId: new ObjectId(),
         customerId: new ObjectId(),
         rules: [r],
-        usage: { tokens: 0, requests: 0, spendUnits: 0, currency: "USD" },
+        usage: { tokens: 0, requests: 0, spendMicros: 0, currency: "USD" },
       }),
     );
     expect(calls).toBe(0);
@@ -606,7 +606,7 @@ describe("recordUsage (repo-backed)", () => {
         organizationId: new ObjectId(),
         customerId: new ObjectId(),
         rules: [r1, r2],
-        usage: { tokens: 100, requests: 1, spendUnits: 0, currency: "USD" },
+        usage: { tokens: 100, requests: 1, spendMicros: 0, currency: "USD" },
         occurredAt: new Date(1700000000000),
       }),
     );
@@ -636,7 +636,7 @@ describe("recordUsage (repo-backed)", () => {
         organizationId: new ObjectId(),
         customerId: new ObjectId(),
         rules: [r1, r2],
-        usage: { tokens: 100, requests: 0, spendUnits: 0, currency: "USD" },
+        usage: { tokens: 100, requests: 0, spendMicros: 0, currency: "USD" },
       }),
     );
     expect(captured).toEqual([100]);
@@ -813,7 +813,7 @@ describe("reserveLimits / settleLimits / releaseLimits", () => {
         usage: {
           tokens: 350,
           requests: 1,
-          spendUnits: 0,
+          spendMicros: 0,
           currency: "USD",
         },
       }),
@@ -878,7 +878,7 @@ describe("reserveLimits / settleLimits / releaseLimits", () => {
         usage: {
           tokens: 250,
           requests: 1,
-          spendUnits: 0,
+          spendMicros: 0,
           currency: "USD",
         },
       }),
@@ -929,7 +929,7 @@ describe("reserveLimits / settleLimits / releaseLimits", () => {
         usage: {
           tokens: 0,
           requests: 1,
-          spendUnits: 400,
+          spendMicros: 400,
           currency: "USD",
         },
       }),
@@ -971,7 +971,7 @@ describe("reserveLimits / settleLimits / releaseLimits", () => {
         organizationId: new ObjectId(),
         customerId: new ObjectId(),
         rules: [r],
-        usage: { tokens: 0, requests: 1, spendUnits: 0, currency: "USD" },
+        usage: { tokens: 0, requests: 1, spendMicros: 0, currency: "USD" },
       }),
     );
     expect(calls).toBe(0);
@@ -1029,7 +1029,7 @@ describe("reserveLimits / settleLimits / releaseLimits", () => {
         customerId: new ObjectId(),
         rules: [r],
         estimatedTokens: 0,
-        estimatedSpendUnits: 0,
+        estimatedSpendMicros: 0,
       }),
     );
     expect(res.ok).toBe(true);

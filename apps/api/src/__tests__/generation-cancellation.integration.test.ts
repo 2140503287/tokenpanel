@@ -39,6 +39,7 @@ async function ensureConnected(): Promise<boolean> {
   if (connected) return true;
   try {
     const uri =
+      process.env.TEST_MONGODB_URI ??
       "mongodb://tokenpanel:tokenpanel_dev@localhost:27017/?directConnection=true&replicaSet=rs0&authSource=admin";
     await import("mongodb").then(({ MongoClient }) =>
       new MongoClient(uri).connect().then((c) => c.db("admin").command({ ping: 1 })),
@@ -79,8 +80,8 @@ async function installRuntime(): Promise<void> {
 }
 
 async function seedOrgCustomer(
-  balanceUnits: number,
-  reservedUnits: number,
+  balanceMicros: number,
+  reservedMicros: number,
 ): Promise<{ orgId: ObjectId; customerId: ObjectId }> {
   const orgId = new ObjectId();
   const customerId = new ObjectId();
@@ -100,7 +101,7 @@ async function seedOrgCustomer(
     externalId: "cc",
     name: "cc",
     email: null,
-    balance: { amountUnits: balanceUnits, currency: "USD", reservedUnits },
+    balance: { amountMicros: balanceMicros, currency: "USD", reservedMicros },
     status: "active",
     metadata: {},
     createdAt: new Date(),
@@ -135,7 +136,7 @@ function modelStub(orgId: ObjectId): {
     upstreamModelId: "gpt-4o",
     priority: 0,
     active: true,
-    price: { inputUnitsPerMillion: 0, outputUnitsPerMillion: 0 },
+    price: { inputMicrosPerMillion: 0, outputMicrosPerMillion: 0 },
   } as unknown as ModelEntryDoc;
   const model: ModelDoc = {
     _id: new ObjectId(),
@@ -149,7 +150,7 @@ function modelStub(orgId: ObjectId): {
     attachment: false,
     limits: { context: 128000 },
     modalities: { input: ["text"], output: ["text"] },
-    price: { inputUnitsPerMillion: 0, outputUnitsPerMillion: 0 },
+    price: { inputMicrosPerMillion: 0, outputMicrosPerMillion: 0 },
     marginBps: 0,
     currency: "USD",
     active: true,
@@ -160,16 +161,16 @@ function modelStub(orgId: ObjectId): {
   return { model, entry, provider };
 }
 
-async function reservedUnitsOf(customerId: ObjectId): Promise<number> {
+async function reservedMicrosOf(customerId: ObjectId): Promise<number> {
   const db = await getDb();
   const c = await db.customers.findOne({ _id: customerId });
-  return (c?.balance as { reservedUnits?: number } | null)?.reservedUnits ?? 0;
+  return (c?.balance as { reservedMicros?: number } | null)?.reservedMicros ?? 0;
 }
 
-async function amountUnitsOf(customerId: ObjectId): Promise<number> {
+async function amountMicrosOf(customerId: ObjectId): Promise<number> {
   const db = await getDb();
   const c = await db.customers.findOne({ _id: customerId });
-  return (c?.balance as { amountUnits?: number } | null)?.amountUnits ?? 0;
+  return (c?.balance as { amountMicros?: number } | null)?.amountMicros ?? 0;
 }
 
 beforeEach(async () => {
@@ -195,7 +196,7 @@ describe("generation cancellation (live replica set)", () => {
   test("pre-commit disconnect releases the held reservation", async () => {
     if (!connected) return;
     const { orgId, customerId } = await seedOrgCustomer(10_000, 500);
-    expect(await reservedUnitsOf(customerId)).toBe(500);
+    expect(await reservedMicrosOf(customerId)).toBe(500);
 
     const { model } = modelStub(orgId);
     const preCommitInterrupted = transitionStream(
@@ -215,8 +216,8 @@ describe("generation cancellation (live replica set)", () => {
       model,
       protocol: "openai",
       gatewayRequestId: "gw_cancel_pre",
-      reservedUnits: 500,
-      reservation: { reservedUnits: 500, customerId, organizationId: orgId },
+      reservedMicros: 500,
+      reservation: { reservedMicros: 500, customerId, organizationId: orgId },
       rules: [],
       startedAtMs: Date.now(),
       lifecycle: preCommitInterrupted,
@@ -227,8 +228,8 @@ describe("generation cancellation (live replica set)", () => {
 
     expect(result.action).toBe("released");
     // Hold fully returned; cash balance untouched.
-    expect(await reservedUnitsOf(customerId)).toBe(0);
-    expect(await amountUnitsOf(customerId)).toBe(10_000);
+    expect(await reservedMicrosOf(customerId)).toBe(0);
+    expect(await amountMicrosOf(customerId)).toBe(10_000);
   });
 
   test("post-commit disconnect with reported usage settles (debit + release hold)", async () => {
@@ -259,21 +260,21 @@ describe("generation cancellation (live replica set)", () => {
       model,
       protocol: "openai",
       gatewayRequestId: "gw_cancel_post",
-      reservedUnits: 500,
-      reservation: { reservedUnits: 500, customerId, organizationId: orgId },
+      reservedMicros: 500,
+      reservation: { reservedMicros: 500, customerId, organizationId: orgId },
       rules: [],
       startedAtMs: Date.now(),
       lifecycle: s,
       activeEntry: entry,
       activeProvider: provider,
       usage,
-      priceUnitsOverride: 300,
+      priceMicrosOverride: 300,
     });
 
     // Post-commit with reported usage → settle path (not free-bill, not leaked).
     expect(result.action).toBe("settled");
-    expect(await reservedUnitsOf(customerId)).toBe(0);
-    expect(await amountUnitsOf(customerId)).toBe(9700); // 10000 - 300 price
+    expect(await reservedMicrosOf(customerId)).toBe(0);
+    expect(await amountMicrosOf(customerId)).toBe(9700); // 10000 - 300 price
 
     const db = await getDb();
     const usageRows = await db.usageRecords

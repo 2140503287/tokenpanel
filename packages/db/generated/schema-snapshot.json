@@ -201,7 +201,7 @@
           }
         },
         {
-          "name": "amountUnits",
+          "name": "amountMicros",
           "optional": false,
           "type": {
             "kind": "refinement",
@@ -211,6 +211,13 @@
                 "kind": "NumberKeyword"
               }
             }
+          }
+        },
+        {
+          "name": "amountUnits",
+          "optional": true,
+          "type": {
+            "kind": "circular"
           }
         },
         {
@@ -341,7 +348,7 @@
             }
           },
           {
-            "name": "amountUnits",
+            "name": "amountMicros",
             "optional": false,
             "type": {
               "kind": "refinement",
@@ -351,6 +358,13 @@
                   "kind": "circular"
                 }
               }
+            }
+          },
+          {
+            "name": "amountUnits",
+            "optional": true,
+            "type": {
+              "kind": "circular"
             }
           },
           {
@@ -424,8 +438,18 @@
               "kind": "struct",
               "props": [
                 {
-                  "name": "amountUnits",
+                  "name": "amountMicros",
                   "optional": false,
+                  "type": {
+                    "kind": "refinement",
+                    "from": {
+                      "kind": "circular"
+                    }
+                  }
+                },
+                {
+                  "name": "amountUnits",
+                  "optional": true,
                   "type": {
                     "kind": "refinement",
                     "from": {
@@ -441,8 +465,15 @@
                   }
                 },
                 {
-                  "name": "reservedUnits",
+                  "name": "reservedMicros",
                   "optional": false,
+                  "type": {
+                    "kind": "circular"
+                  }
+                },
+                {
+                  "name": "reservedUnits",
+                  "optional": true,
                   "type": {
                     "kind": "circular"
                   }
@@ -891,7 +922,21 @@
               "kind": "struct",
               "props": [
                 {
+                  "name": "cacheReadMicrosPerMillion",
+                  "optional": true,
+                  "type": {
+                    "kind": "circular"
+                  }
+                },
+                {
                   "name": "cacheReadUnitsPerMillion",
+                  "optional": true,
+                  "type": {
+                    "kind": "circular"
+                  }
+                },
+                {
+                  "name": "cacheWriteMicrosPerMillion",
                   "optional": true,
                   "type": {
                     "kind": "circular"
@@ -905,6 +950,13 @@
                   }
                 },
                 {
+                  "name": "inputAudioMicrosPerMillion",
+                  "optional": true,
+                  "type": {
+                    "kind": "circular"
+                  }
+                },
+                {
                   "name": "inputAudioUnitsPerMillion",
                   "optional": true,
                   "type": {
@@ -912,8 +964,22 @@
                   }
                 },
                 {
-                  "name": "inputUnitsPerMillion",
+                  "name": "inputMicrosPerMillion",
                   "optional": false,
+                  "type": {
+                    "kind": "circular"
+                  }
+                },
+                {
+                  "name": "inputUnitsPerMillion",
+                  "optional": true,
+                  "type": {
+                    "kind": "circular"
+                  }
+                },
+                {
+                  "name": "outputAudioMicrosPerMillion",
+                  "optional": true,
                   "type": {
                     "kind": "circular"
                   }
@@ -926,8 +992,22 @@
                   }
                 },
                 {
-                  "name": "outputUnitsPerMillion",
+                  "name": "outputMicrosPerMillion",
                   "optional": false,
+                  "type": {
+                    "kind": "circular"
+                  }
+                },
+                {
+                  "name": "outputUnitsPerMillion",
+                  "optional": true,
+                  "type": {
+                    "kind": "circular"
+                  }
+                },
+                {
+                  "name": "reasoningMicrosPerMillion",
+                  "optional": true,
                   "type": {
                     "kind": "circular"
                   }
@@ -1695,6 +1775,9 @@
                 },
                 {
                   "kind": "Literal"
+                },
+                {
+                  "kind": "Literal"
                 }
               ]
             }
@@ -2148,8 +2231,15 @@
               "kind": "struct",
               "props": [
                 {
-                  "name": "amountUnits",
+                  "name": "amountMicros",
                   "optional": false,
+                  "type": {
+                    "kind": "circular"
+                  }
+                },
+                {
+                  "name": "amountUnits",
+                  "optional": true,
                   "type": {
                     "kind": "circular"
                   }
@@ -2256,8 +2346,15 @@
             }
           },
           {
-            "name": "costUnits",
+            "name": "costMicros",
             "optional": false,
+            "type": {
+              "kind": "circular"
+            }
+          },
+          {
+            "name": "costUnits",
+            "optional": true,
             "type": {
               "kind": "circular"
             }
@@ -2392,8 +2489,15 @@
             }
           },
           {
-            "name": "priceUnits",
+            "name": "priceMicros",
             "optional": false,
+            "type": {
+              "kind": "circular"
+            }
+          },
+          {
+            "name": "priceUnits",
+            "optional": true,
             "type": {
               "kind": "circular"
             }

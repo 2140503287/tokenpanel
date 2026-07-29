@@ -6,6 +6,7 @@ import {
   toPositiveInt,
   toNonNegInt,
   buildModelPayload,
+  priceFromCostMargin,
   coerceMetadataValue,
   metadataToRows,
   rowsToMetadata,
@@ -69,6 +70,18 @@ function validForm(over: Record<string, unknown> = {}) {
     status: "none",
     inputUnits: "300",
     outputUnits: "600",
+    reasoningUnits: "",
+    cacheReadUnits: "",
+    cacheWriteUnits: "",
+    inputAudioUnits: "",
+    outputAudioUnits: "",
+    costInputUnits: "",
+    costOutputUnits: "",
+    costReasoningUnits: "",
+    costCacheReadUnits: "",
+    costCacheWriteUnits: "",
+    costInputAudioUnits: "",
+    costOutputAudioUnits: "",
     currency: "USD",
     marginBps: "0",
     firstProviderId: "p1",
@@ -121,10 +134,37 @@ test("buildModelPayload: context optional — empty/zero/non-int omits context",
   if (rFloat.ok) expect((rFloat.payload.limits as Record<string, unknown>).context).toBeUndefined();
 });
 
-test("buildModelPayload: price not non-neg int → error", () => {
+test("buildModelPayload: price not non-neg decimal → error", () => {
   expect(buildModelPayload(validForm({ inputUnits: "-1" }), true).ok).toBe(false);
-  expect(buildModelPayload(validForm({ inputUnits: "1.5" }), true).ok).toBe(false);
+  expect(buildModelPayload(validForm({ inputUnits: "abc" }), true).ok).toBe(false);
   expect(buildModelPayload(validForm({ outputUnits: "" }), true).ok).toBe(false);
+});
+
+test("buildModelPayload: optional rates included when set, omitted when blank", () => {
+  const withRates = buildModelPayload(
+    validForm({ cacheReadUnits: "30", cacheWriteUnits: "375", reasoningUnits: "900" }),
+    true,
+  );
+  expect(withRates.ok).toBe(true);
+  if (withRates.ok) {
+    expect(withRates.payload.price).toEqual({
+      inputMicrosPerMillion: 300_000_000,
+      outputMicrosPerMillion: 600_000_000,
+      cacheReadMicrosPerMillion: 30_000_000,
+      cacheWriteMicrosPerMillion: 375_000_000,
+      reasoningMicrosPerMillion: 900_000_000,
+    });
+  }
+  const blank = buildModelPayload(validForm({ cacheReadUnits: "  " }), true);
+  expect(blank.ok).toBe(true);
+  if (blank.ok) {
+    expect(blank.payload.price).toEqual({ inputMicrosPerMillion: 300_000_000, outputMicrosPerMillion: 600_000_000 });
+  }
+});
+
+test("buildModelPayload: optional rate not non-neg decimal → error", () => {
+  expect(buildModelPayload(validForm({ cacheReadUnits: "-5" }), true).ok).toBe(false);
+  expect(buildModelPayload(validForm({ reasoningUnits: "abc" }), true).ok).toBe(false);
 });
 
 test("buildModelPayload: margin not non-neg int → error", () => {
@@ -340,7 +380,7 @@ test("formFromModel: rehydrates metadata rows from model", () => {
     attachment: false,
     limits: { context: 100 },
     modalities: { input: ["text"], output: ["text"] },
-    price: { inputUnitsPerMillion: 0, outputUnitsPerMillion: 0 },
+    price: { inputMicrosPerMillion: 0, outputMicrosPerMillion: 0 },
     marginBps: 0,
     currency: "USD",
     active: true,
@@ -366,7 +406,7 @@ test("formFromModel: malformed metadata sets corrupt flag and empty rows", () =>
     attachment: false,
     limits: { context: 100 },
     modalities: { input: ["text"], output: ["text"] },
-    price: { inputUnitsPerMillion: 0, outputUnitsPerMillion: 0 },
+    price: { inputMicrosPerMillion: 0, outputMicrosPerMillion: 0 },
     marginBps: 0,
     currency: "USD",
     active: true,
@@ -377,4 +417,137 @@ test("formFromModel: malformed metadata sets corrupt flag and empty rows", () =>
   expect(f.metadataSourceMalformed).toBe(true);
   expect(f.metadataRows).toEqual([]);
   expect(f.metadataCorruptReason).toMatch(/null/i);
+});
+
+test("priceFromCostMargin: integer-exact markup, ceil'd so margin never undercut", () => {
+  // 50% of $1.00/M = $1.50/M.
+  expect(priceFromCostMargin("1", "5000")).toBe("1.5");
+  // 100 bps (1%) of $1.00/M = $1.01/M.
+  expect(priceFromCostMargin("1", "100")).toBe("1.01");
+  // 0 margin → price equals cost.
+  expect(priceFromCostMargin("2.5", "0")).toBe("2.5");
+  // Markup that lands on a sub-micro boundary is ceil'd up, never down:
+  // $0.000001/M cost × 1 bps = 0.0000000001 → ceil → 1 micro → $0.000002/M.
+  expect(priceFromCostMargin("0.000001", "1")).toBe("0.000002");
+});
+
+test("priceFromCostMargin: blank cost or bad margin → undefined (field unchanged)", () => {
+  expect(priceFromCostMargin("", "5000")).toBeUndefined();
+  expect(priceFromCostMargin("  ", "5000")).toBeUndefined();
+  expect(priceFromCostMargin("1", "abc")).toBeUndefined();
+  expect(priceFromCostMargin("1", "-5")).toBeUndefined();
+  expect(priceFromCostMargin("not-a-number", "100")).toBeUndefined();
+});
+
+test("buildModelPayload: create with cost → primary entry carries cost schedule", () => {
+  const r = buildModelPayload(
+    validForm({ costInputUnits: "1", costOutputUnits: "2", costCacheReadUnits: "0.1" }),
+    true,
+  );
+  expect(r.ok).toBe(true);
+  if (r.ok) {
+    expect(r.payload.entries).toEqual([
+      {
+        providerId: "p1",
+        upstreamModelId: "gpt-4o",
+        priority: 0,
+        active: true,
+        cost: {
+          inputMicrosPerMillion: 1_000_000,
+          outputMicrosPerMillion: 2_000_000,
+          cacheReadMicrosPerMillion: 100_000,
+        },
+      },
+    ]);
+  }
+});
+
+test("buildModelPayload: create with no cost → primary entry has no cost field", () => {
+  const r = buildModelPayload(validForm(), true);
+  expect(r.ok).toBe(true);
+  if (r.ok) {
+    const entry = (r.payload.entries as Array<Record<string, unknown>>)[0]!;
+    expect("cost" in entry).toBe(false);
+  }
+});
+
+test("buildModelPayload: cost input/output required before optional cost rates", () => {
+  const r = buildModelPayload(validForm({ costCacheReadUnits: "0.1" }), true);
+  expect(r.ok).toBe(false);
+});
+
+test("buildModelPayload: edit merges cost into primary entry, preserves others", () => {
+  const existing = {
+    entries: [
+      { id: "e1", providerId: "p1", upstreamModelId: "gpt-4o", priority: 0, active: true },
+      {
+        id: "e2",
+        providerId: "p2",
+        upstreamModelId: "claude",
+        priority: 1,
+        active: true,
+        cost: { inputMicrosPerMillion: 999, outputMicrosPerMillion: 888 },
+        price: { inputMicrosPerMillion: 111, outputMicrosPerMillion: 222 },
+      },
+    ],
+  } as never;
+  const r = buildModelPayload(validForm({ costInputUnits: "1", costOutputUnits: "2" }), false, existing);
+  expect(r.ok).toBe(true);
+  if (r.ok) {
+    expect(r.payload.entries).toEqual([
+      {
+        id: "e1",
+        providerId: "p1",
+        upstreamModelId: "gpt-4o",
+        priority: 0,
+        active: true,
+        cost: { inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 2_000_000 },
+      },
+      {
+        id: "e2",
+        providerId: "p2",
+        upstreamModelId: "claude",
+        priority: 1,
+        active: true,
+        cost: { inputMicrosPerMillion: 999, outputMicrosPerMillion: 888 },
+        price: { inputMicrosPerMillion: 111, outputMicrosPerMillion: 222 },
+      },
+    ]);
+  }
+});
+
+test("formFromModel: rehydrates cost fields from primary entry", () => {
+  const f = formFromModel({
+    _id: "m1",
+    organizationId: "o1",
+    aliasId: "my-gpt",
+    displayName: "My GPT",
+    entries: [
+      {
+        id: "e1",
+        providerId: "p1",
+        upstreamModelId: "gpt-4o",
+        priority: 0,
+        active: true,
+        cost: { inputMicrosPerMillion: 1_000_000, outputMicrosPerMillion: 2_500_000 },
+      },
+    ],
+    reasoning: false,
+    toolCall: false,
+    attachment: false,
+    limits: { context: 100 },
+    modalities: { input: ["text"], output: ["text"] },
+    price: { inputMicrosPerMillion: 3_000_000, outputMicrosPerMillion: 6_000_000 },
+    marginBps: 0,
+    currency: "USD",
+    active: true,
+    metadata: {},
+    createdAt: "",
+    updatedAt: "",
+  } as never);
+  expect(f.costInputUnits).toBe("1");
+  expect(f.costOutputUnits).toBe("2.5");
+  // price fields come from model.price, independent of cost
+  expect(f.inputUnits).toBe("3");
+  expect(f.outputUnits).toBe("6");
 });

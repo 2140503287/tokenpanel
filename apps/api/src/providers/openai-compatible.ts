@@ -4,6 +4,7 @@ import type {
   ChatRequest,
   ChatResponse,
   ChatMessage,
+  ContentPart,
   DiscoveredModel,
   ProviderAdapter,
   StreamChunk,
@@ -62,13 +63,76 @@ export function joinUrl(base: string, path: string): string {
   return base + path;
 }
 
+/** Serialize an internal ContentPart to the OpenAI wire shape. */
+function contentPartToOpenAI(p: ContentPart): Record<string, unknown> {
+  switch (p.type) {
+    case "text":
+      return { type: "text", text: p.text };
+    case "image_url":
+      return {
+        type: "image_url",
+        image_url: {
+          url: p.imageUrl.url,
+          ...(p.imageUrl.detail !== undefined ? { detail: p.imageUrl.detail } : {}),
+        },
+      };
+    case "input_audio":
+      return {
+        type: "input_audio",
+        input_audio: { data: p.inputData.data, format: p.inputData.format },
+      };
+    case "file":
+      return {
+        type: "file",
+        file: {
+          ...(p.file.fileId !== undefined ? { file_id: p.file.fileId } : {}),
+          ...(p.file.fileData !== undefined ? { file_data: p.file.fileData } : {}),
+          ...(p.file.filename !== undefined ? { filename: p.file.filename } : {}),
+        },
+      };
+    // Anthropic-shaped blocks have no OpenAI request equivalent; degrade to text.
+    case "tool_use":
+      return { type: "text", text: `[tool_use ${p.name}]` };
+    case "tool_result":
+      return {
+        type: "text",
+        text: typeof p.content === "string" ? p.content : JSON.stringify(p.content ?? ""),
+      };
+    case "raw":
+      return { type: "text", text: "[unsupported block]" };
+  }
+}
+
+function messageContentToOpenAI(content: ChatMessage["content"]): string | Record<string, unknown>[] | null {
+  if (content === null) return null;
+  if (typeof content === "string") return content;
+  return content.map(contentPartToOpenAI);
+}
+
 function toOpenAiMessages(req: ChatRequest): unknown[] {
-  return req.messages.map((m) => {
-    if (typeof m.content === "string") {
-      return { role: m.role, content: m.content };
+  const out: unknown[] = [];
+  // Top-level system carrier (Anthropic surface) → developer message.
+  if (req.system && req.system.text.length > 0) {
+    out.push({ role: "developer", content: req.system.text });
+  }
+  for (const m of req.messages) {
+    // OpenAI deprecated `system` in favor of `developer`; modern models
+    // (o-series, gpt-4.1/5) reject system-role messages.
+    const role = m.role === "system" ? "developer" : m.role;
+    const msg: Record<string, unknown> = {
+      role,
+      content: messageContentToOpenAI(m.content),
+    };
+    if (m.name !== undefined) msg.name = m.name;
+    if (m.toolCallId !== undefined) msg.tool_call_id = m.toolCallId;
+    if (m.toolCalls !== undefined) msg.tool_calls = m.toolCalls;
+    if (role === "assistant") {
+      msg.refusal = m.refusal ?? null;
+      if (m.audio !== undefined) msg.audio = m.audio;
     }
-    return { role: m.role, content: m.content };
-  });
+    out.push(msg);
+  }
+  return out;
 }
 
 export function buildChatBody(req: ChatRequest, stream: boolean): Record<string, unknown> {
@@ -136,12 +200,19 @@ export function assembleChoice(raw: unknown, index: number): ChatResponse["choic
   const msgRaw = r.message as Record<string, unknown> | undefined;
   if (!msgRaw) return null;
   const role = (str(msgRaw.role) ?? "assistant") as ChatMessage["role"];
-  let content = "";
-  if (typeof msgRaw.content === "string") content = msgRaw.content;
+  // Spec: response content is `string | null`; preserve null (tool-call turns)
+  // instead of coercing to "" so the public surface re-emits canonical null.
+  const content = typeof msgRaw.content === "string" ? msgRaw.content : null;
   const toolCalls = msgRaw.tool_calls as unknown[] | undefined;
   const message: ChatMessage = { role, content };
   if (toolCalls) message.toolCalls = toolCalls;
-  if (msgRaw.refusal !== undefined) message.content = String(msgRaw.refusal ?? "");
+  if (msgRaw.refusal !== undefined) message.refusal = str(msgRaw.refusal) ?? null;
+  const name = str(msgRaw.name);
+  if (name !== undefined) message.name = name;
+  const audio = msgRaw.audio as { id?: unknown } | undefined;
+  if (audio && typeof audio === "object" && typeof audio.id === "string") {
+    message.audio = { id: audio.id };
+  }
   const reasoningContent =
     str(msgRaw.reasoning_content) ??
     str(typeof msgRaw.reasoning === "string" ? msgRaw.reasoning : undefined) ??
@@ -455,6 +526,8 @@ export function createOpenAICompatibleAdapter(): ProviderAdapter {
               const deltaRaw = co.delta as Record<string, unknown> | undefined;
               if (!deltaRaw) continue;
               const delta: StreamChunk["delta"] = {};
+              const role = str(deltaRaw.role);
+              if (role) delta.role = role;
               const content = str(deltaRaw.content);
               if (content) delta.content = content;
               const reasoning =

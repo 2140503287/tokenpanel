@@ -76,8 +76,19 @@ export const MoneyUnits = SafeInt.pipe(Schema.nonNegative());
 
 export type MoneyUnits = Schema.Schema.Type<typeof MoneyUnits>;
 
+/**
+ * Non-negative integer micros — one-millionth of the major currency unit
+ * (1 major = 1,000,000 micros). Authoritative storage/computation grain after
+ * the units → micros migration; integer-exact (no float). Admins never see
+ * micros — they type decimal major units parsed via parseMajorToMicros.
+ */
+export const MoneyMicros = SafeInt.pipe(Schema.nonNegative());
+
+export type MoneyMicros = Schema.Schema.Type<typeof MoneyMicros>;
+
 export const Money = Schema.Struct({
-  amountUnits: MoneyUnits,
+  amountMicros: MoneyMicros,
+  amountUnits: Schema.optionalWith(MoneyUnits, { exact: true }),
   currency: CurrencyCode,
 });
 

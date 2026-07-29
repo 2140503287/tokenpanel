@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import {
-  formatMoney,
+  formatMicros,
   formatDate,
   formatNumber,
   formatCompact,
@@ -8,70 +8,13 @@ import {
   currencyExponent,
 } from "../format.ts";
 
-test("formatMoney: USD positive includes ISO code", () => {
-  expect(formatMoney(12345, "USD")).toBe("$123.45 USD");
-  expect(formatMoney(100, "USD")).toBe("$1.00 USD");
-  expect(formatMoney(0, "USD")).toBe("$0.00 USD");
-});
-
-test("formatMoney: negative adds leading minus", () => {
-  expect(formatMoney(-12345, "USD")).toBe("-$123.45 USD");
-  expect(formatMoney(-100, "USD")).toBe("-$1.00 USD");
-});
-
-test("formatMoney: dollar currencies are disambiguated by ISO code", () => {
-  expect(formatMoney(12345, "AUD")).toBe("$123.45 AUD");
-  expect(formatMoney(12345, "CAD")).toBe("$123.45 CAD");
-  expect(formatMoney(12345, "NZD")).toBe("$123.45 NZD");
-  expect(formatMoney(12345, "HKD")).toBe("$123.45 HKD");
-  expect(formatMoney(12345, "SGD")).toBe("$123.45 SGD");
-});
-
-test("formatMoney: EUR/GBP/INR use symbol + 2 decimals + code", () => {
-  expect(formatMoney(12345, "EUR")).toBe("\u20ac123.45 EUR");
-  expect(formatMoney(12345, "GBP")).toBe("\u00a3123.45 GBP");
-  expect(formatMoney(12345, "INR")).toBe("\u20b9123.45 INR");
-});
-
-test("formatMoney: JPY zero-decimal units (1 unit = 1 yen)", () => {
-  expect(formatMoney(12345, "JPY")).toBe("\u00a512345 JPY");
-  expect(formatMoney(100, "JPY")).toBe("\u00a5100 JPY");
-  expect(formatMoney(0, "JPY")).toBe("\u00a50 JPY");
-});
-
-test("formatMoney: three-decimal currencies (KWD)", () => {
-  // 1.234 KWD = 1234 units
-  expect(formatMoney(1234, "KWD")).toBe("1.234 KWD");
-  expect(formatMoney(1, "KWD")).toBe("0.001 KWD");
-});
-
 test("currencyExponent: zero-decimal BIF/VUV (not /100)", () => {
   expect(currencyExponent("BIF")).toBe(0);
   expect(currencyExponent("VUV")).toBe(0);
-  expect(formatMoney(1234, "BIF")).toBe("1234 BIF");
-  expect(formatMoney(50, "VUV")).toBe("50 VUV");
 });
 
 test("currencyExponent: four-decimal CLF", () => {
   expect(currencyExponent("CLF")).toBe(4);
-  // 1.2345 CLF = 12345 units
-  expect(formatMoney(12345, "CLF")).toBe("1.2345 CLF");
-  expect(formatMoney(1, "CLF")).toBe("0.0001 CLF");
-});
-
-test("formatMoney: unknown currency → 'X.XX CODE' fallback", () => {
-  expect(formatMoney(12345, "XYZ")).toBe("123.45 XYZ");
-  expect(formatMoney(0, "ABC")).toBe("0.00 ABC");
-});
-
-test("formatMoney: units < 10 pads with leading zero", () => {
-  expect(formatMoney(105, "USD")).toBe("$1.05 USD");
-  expect(formatMoney(5, "USD")).toBe("$0.05 USD");
-});
-
-test("formatMoney: currency uppercased", () => {
-  expect(formatMoney(12345, "usd")).toBe("$123.45 USD");
-  expect(formatMoney(12345, "jpy")).toBe("\u00a512345 JPY");
 });
 
 test("formatDate: null/undefined → em dash", () => {
@@ -143,4 +86,28 @@ test("formatRelative: past days → 'Xd ago'", () => {
 test("formatRelative: boundary 59s vs 60s", () => {
   const justUnder = new Date(Date.now() - 59_000);
   expect(formatRelative(justUnder)).toBe("just now");
+});
+
+test("formatMicros: whole-cent amounts render at standard 2dp (USD)", () => {
+  expect(formatMicros(150_000, "USD")).toBe("$0.15 USD"); // $0.15
+  expect(formatMicros(3_000_000, "USD")).toBe("$3.00 USD"); // $3
+  expect(formatMicros(1_234_567, "USD")).toBe("$1.23 USD"); // $1.234567 → 2dp
+  expect(formatMicros(0, "USD")).toBe("$0.00 USD");
+  expect(formatMicros(-150_000, "USD")).toBe("-$0.15 USD");
+});
+
+test("formatMicros: sub-cent amounts expand so they never show $0.00", () => {
+  expect(formatMicros(300, "USD")).toBe("$0.0003 USD"); // $0.0003
+  expect(formatMicros(1, "USD")).toBe("$0.000001 USD");
+  expect(formatMicros(5_000, "USD")).toBe("$0.005 USD"); // $0.005, trimmed
+});
+
+test("formatMicros: zero-decimal currency (JPY) sub-unit expands", () => {
+  expect(formatMicros(1_000_000, "JPY")).toBe("\u00a51 JPY"); // 1 yen
+  expect(formatMicros(500_000, "JPY")).toBe("\u00a50.5 JPY"); // sub-yen, trimmed
+});
+
+test("formatMicros: three-decimal currency (KWD)", () => {
+  expect(formatMicros(1_000, "KWD")).toBe("0.001 KWD"); // 1 fils
+  expect(formatMicros(1_500_000, "KWD")).toBe("1.500 KWD");
 });

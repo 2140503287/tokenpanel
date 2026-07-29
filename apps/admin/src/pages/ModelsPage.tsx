@@ -42,6 +42,8 @@ import type { FetchedModel } from "../api/catalog.ts";
 import { cn } from "@/lib/utils";
 import {
   MODEL_METADATA_POLICY,
+  parseMajorToMicros,
+  formatMicrosToMajor,
   type ModelStatus,
 } from "@tokenpanel/contracts";
 import { hasPermission, useAuth } from "../auth/AuthContext.tsx";
@@ -70,12 +72,14 @@ export {
   formFromModel,
   formFromFetched,
   buildModelPayload,
+  priceFromCostMargin,
   slugifyModelId,
   emptyForm,
 } from "./models/model-form.ts";
 
 import {
   type FormState,
+  type TokenPriceSchedule,
   type Model,
   type ModelEntry,
   type Provider,
@@ -84,7 +88,7 @@ import {
   formFromModel,
   formFromFetched,
   buildModelPayload,
-  toNonNegInt,
+  priceFromCostMargin,
   emptyForm,
 } from "./models/model-form.ts";
 
@@ -209,7 +213,7 @@ export default function ModelsPage(): React.ReactElement {
       e.preventDefault();
       if (!canWrite) return;
       const isCreate = editing === null;
-      const built = buildModelPayload(form, isCreate);
+      const built = buildModelPayload(form, isCreate, editing ?? undefined);
       if (!built.ok) {
         setFormError(built.error);
         return;
@@ -525,13 +529,32 @@ function ModelEditor({
 
         <SectionTitle>Pricing &amp; status</SectionTitle>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Field id="m-ipm" label="Input price (units/M)" tooltip="Integer units per million input tokens. 300 = $3.00/M at USD scale (1 unit = $0.01).">
-            <Input id="m-ipm" type="number" min={0} value={form.inputUnits} onChange={(e) => setField(setForm, "inputUnits", e.target.value)} required disabled={saving} />
-            <UnitsPreview value={form.inputUnits} currency={form.currency} suffix="/ 1M tokens" />
+          <Field id="m-cur" label="Currency">
+            <Input id="m-cur" type="text" value={form.currency} onChange={(e) => setField(setForm, "currency", e.target.value)} required disabled={saving} />
           </Field>
-          <Field id="m-opm" label="Output price (units/M)" tooltip="Integer units per million output tokens. Same scale as input price.">
-            <Input id="m-opm" type="number" min={0} value={form.outputUnits} onChange={(e) => setField(setForm, "outputUnits", e.target.value)} required disabled={saving} />
-            <UnitsPreview value={form.outputUnits} currency={form.currency} suffix="/ 1M tokens" />
+          <Field id="m-margin" label="Margin (bps)" tooltip="Markup over cost, in basis points (100 = 1%). Changing this re-derives the price fields below from cost; you can still edit price directly afterward.">
+            <Input
+              id="m-margin"
+              type="number"
+              min={0}
+              value={form.marginBps}
+              onChange={(e) => {
+                const marginBps = e.target.value;
+                setForm((prev) => ({
+                  ...prev,
+                  marginBps,
+                  inputUnits: priceFromCostMargin(prev.costInputUnits, marginBps) ?? prev.inputUnits,
+                  outputUnits: priceFromCostMargin(prev.costOutputUnits, marginBps) ?? prev.outputUnits,
+                  reasoningUnits: priceFromCostMargin(prev.costReasoningUnits, marginBps) ?? prev.reasoningUnits,
+                  cacheReadUnits: priceFromCostMargin(prev.costCacheReadUnits, marginBps) ?? prev.cacheReadUnits,
+                  cacheWriteUnits: priceFromCostMargin(prev.costCacheWriteUnits, marginBps) ?? prev.cacheWriteUnits,
+                  inputAudioUnits: priceFromCostMargin(prev.costInputAudioUnits, marginBps) ?? prev.inputAudioUnits,
+                  outputAudioUnits: priceFromCostMargin(prev.costOutputAudioUnits, marginBps) ?? prev.outputAudioUnits,
+                }));
+              }}
+              required
+              disabled={saving}
+            />
           </Field>
           <Field id="m-status" label="Status">
             <Select value={form.status} onValueChange={(v) => setField(setForm, "status", v as StatusFilter)} disabled={saving}>
@@ -547,12 +570,64 @@ function ModelEditor({
               </SelectContent>
             </Select>
           </Field>
-          <Field id="m-cur" label="Currency">
-            <Input id="m-cur" type="text" value={form.currency} onChange={(e) => setField(setForm, "currency", e.target.value)} required disabled={saving} />
-          </Field>
-          <Field id="m-margin" label="Margin (bps)" tooltip="Basis points added on top of provider cost. 100 bps = 1% markup. Applied per-entry.">
-            <Input id="m-margin" type="number" min={0} value={form.marginBps} onChange={(e) => setField(setForm, "marginBps", e.target.value)} required disabled={saving} />
-          </Field>
+        </div>
+
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Cost — what you pay upstream</div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field id="m-cin" label="Input cost ($/M)" tooltip="Wholesale cost per million input tokens, in major units (e.g. 1.50 = $1.50/M). Drives the Cost column in analytics.">
+                <Input id="m-cin" type="number" min={0} step="any" value={form.costInputUnits} placeholder="blank" onChange={(e) => setField(setForm, "costInputUnits", e.target.value)} disabled={saving} />
+              </Field>
+              <Field id="m-cout" label="Output cost ($/M)" tooltip="Wholesale cost per million output tokens.">
+                <Input id="m-cout" type="number" min={0} step="any" value={form.costOutputUnits} placeholder="blank" onChange={(e) => setField(setForm, "costOutputUnits", e.target.value)} disabled={saving} />
+              </Field>
+              <Field id="m-ccread" label="Cache read cost ($/M)" tooltip="Optional. Cost per million cached-input tokens.">
+                <Input id="m-ccread" type="number" min={0} step="any" value={form.costCacheReadUnits} placeholder="blank" onChange={(e) => setField(setForm, "costCacheReadUnits", e.target.value)} disabled={saving} />
+              </Field>
+              <Field id="m-ccwrite" label="Cache write cost ($/M)" tooltip="Optional. Cost per million cache-creation tokens.">
+                <Input id="m-ccwrite" type="number" min={0} step="any" value={form.costCacheWriteUnits} placeholder="blank" onChange={(e) => setField(setForm, "costCacheWriteUnits", e.target.value)} disabled={saving} />
+              </Field>
+              <Field id="m-creason" label="Reasoning cost ($/M)" tooltip="Optional. Cost per million reasoning tokens.">
+                <Input id="m-creason" type="number" min={0} step="any" value={form.costReasoningUnits} placeholder="blank" onChange={(e) => setField(setForm, "costReasoningUnits", e.target.value)} disabled={saving} />
+              </Field>
+              <Field id="m-ciaudio" label="Input audio cost ($/M)" tooltip="Optional. Cost per million audio-input tokens.">
+                <Input id="m-ciaudio" type="number" min={0} step="any" value={form.costInputAudioUnits} placeholder="blank" onChange={(e) => setField(setForm, "costInputAudioUnits", e.target.value)} disabled={saving} />
+              </Field>
+              <Field id="m-coaudio" label="Output audio cost ($/M)" tooltip="Optional. Cost per million audio-output tokens.">
+                <Input id="m-coaudio" type="number" min={0} step="any" value={form.costOutputAudioUnits} placeholder="blank" onChange={(e) => setField(setForm, "costOutputAudioUnits", e.target.value)} disabled={saving} />
+              </Field>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-4">
+            <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Price — what customers pay</div>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field id="m-ipm" label="Input price ($/M)" tooltip="Retail price per million input tokens, in major units (e.g. 3.00 = $3.00/M). Drives Revenue. Auto-derived from cost + margin; editable.">
+                <Input id="m-ipm" type="number" min={0} step="any" value={form.inputUnits} onChange={(e) => setField(setForm, "inputUnits", e.target.value)} required disabled={saving} />
+                <UnitsPreview value={form.inputUnits} currency={form.currency} suffix="/ 1M tokens" />
+              </Field>
+              <Field id="m-opm" label="Output price ($/M)" tooltip="Retail price per million output tokens.">
+                <Input id="m-opm" type="number" min={0} step="any" value={form.outputUnits} onChange={(e) => setField(setForm, "outputUnits", e.target.value)} required disabled={saving} />
+                <UnitsPreview value={form.outputUnits} currency={form.currency} suffix="/ 1M tokens" />
+              </Field>
+              <Field id="m-cread" label="Cache read price ($/M)" tooltip="Optional. Price per million cached-input tokens. Blank = billed as regular input.">
+                <Input id="m-cread" type="number" min={0} step="any" value={form.cacheReadUnits} placeholder="blank" onChange={(e) => setField(setForm, "cacheReadUnits", e.target.value)} disabled={saving} />
+              </Field>
+              <Field id="m-cwrite" label="Cache write price ($/M)" tooltip="Optional. Price per million cache-creation tokens. Blank = not billed separately.">
+                <Input id="m-cwrite" type="number" min={0} step="any" value={form.cacheWriteUnits} placeholder="blank" onChange={(e) => setField(setForm, "cacheWriteUnits", e.target.value)} disabled={saving} />
+              </Field>
+              <Field id="m-reason" label="Reasoning price ($/M)" tooltip="Optional. Price per million reasoning tokens. Blank = billed at the output rate.">
+                <Input id="m-reason" type="number" min={0} step="any" value={form.reasoningUnits} placeholder="blank" onChange={(e) => setField(setForm, "reasoningUnits", e.target.value)} disabled={saving} />
+              </Field>
+              <Field id="m-iaudio" label="Input audio price ($/M)" tooltip="Optional. Price per million audio-input tokens.">
+                <Input id="m-iaudio" type="number" min={0} step="any" value={form.inputAudioUnits} placeholder="blank" onChange={(e) => setField(setForm, "inputAudioUnits", e.target.value)} disabled={saving} />
+              </Field>
+              <Field id="m-oaudio" label="Output audio price ($/M)" tooltip="Optional. Price per million audio-output tokens.">
+                <Input id="m-oaudio" type="number" min={0} step="any" value={form.outputAudioUnits} placeholder="blank" onChange={(e) => setField(setForm, "outputAudioUnits", e.target.value)} disabled={saving} />
+              </Field>
+            </div>
+          </div>
         </div>
 
         {isCreate ? (
@@ -1129,8 +1204,8 @@ function FallbackChain({
                       </div>
                       {expanded.has(entry.id) ? <EntryCostPrice entry={entry} /> : null}
                       <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                        <span>cost: {entry.cost ? `${entry.cost.inputUnitsPerMillion}/${entry.cost.outputUnitsPerMillion}` : "default"}</span>
-                        <span>price: {entry.price ? `${entry.price.inputUnitsPerMillion}/${entry.price.outputUnitsPerMillion}` : "default"}</span>
+                        <span>cost: {entry.cost ? `${formatMicrosToMajor(entry.cost.inputMicrosPerMillion)}/${formatMicrosToMajor(entry.cost.outputMicrosPerMillion)}` : "default"}</span>
+                        <span>price: {entry.price ? `${formatMicrosToMajor(entry.price.inputMicrosPerMillion)}/${formatMicrosToMajor(entry.price.outputMicrosPerMillion)}` : "default"}</span>
                       </div>
                     </div>
                   </div>
@@ -1154,24 +1229,35 @@ function FallbackChain({
     </div>
   );
 }
+function ScheduleRates({ label, schedule }: { label: string; schedule?: TokenPriceSchedule | undefined }): React.ReactElement {
+  const rows: Array<[string, number | undefined]> = [
+    ["input", schedule?.inputMicrosPerMillion],
+    ["output", schedule?.outputMicrosPerMillion],
+    ["cache read", schedule?.cacheReadMicrosPerMillion],
+    ["cache write", schedule?.cacheWriteMicrosPerMillion],
+    ["reasoning", schedule?.reasoningMicrosPerMillion],
+    ["audio in", schedule?.inputAudioMicrosPerMillion],
+    ["audio out", schedule?.outputAudioMicrosPerMillion],
+  ];
+  return (
+    <div>
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className="grid grid-cols-2 gap-x-3 font-mono text-xs">
+        {rows.map(([name, rate]) => (
+          <span key={name} className={rate === undefined ? "text-muted-foreground/60" : undefined}>
+            {name}={rate ?? "—"}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function EntryCostPrice({ entry }: { entry: ModelEntry }): React.ReactElement {
   return (
     <div className="grid grid-cols-1 gap-2.5 pt-1 sm:grid-cols-2">
-      <div>
-        <div className="text-[11px] text-muted-foreground">Cost override (units/M):</div>
-        <div className="font-mono text-xs">
-          input={entry.cost?.inputUnitsPerMillion ?? "—"}
-          {"  "}output={entry.cost?.outputUnitsPerMillion ?? "—"}
-        </div>
-      </div>
-      <div>
-        <div className="text-[11px] text-muted-foreground">Price override (units/M):</div>
-        <div className="font-mono text-xs">
-          input={entry.price?.inputUnitsPerMillion ?? "—"}
-          {"  "}output={entry.price?.outputUnitsPerMillion ?? "—"}
-        </div>
-      </div>
+      <ScheduleRates label="Cost override:" schedule={entry.cost} />
+      <ScheduleRates label="Price override:" schedule={entry.price} />
     </div>
   );
 }
@@ -1186,10 +1272,21 @@ interface AddEntryState {
   providerId: string;
   upstreamModelId: string;
   manualMode: boolean;
+  marginBps: string;
   costInput: string;
   costOutput: string;
+  costCacheRead: string;
+  costCacheWrite: string;
+  costReasoning: string;
+  costInputAudio: string;
+  costOutputAudio: string;
   priceInput: string;
   priceOutput: string;
+  priceCacheRead: string;
+  priceCacheWrite: string;
+  priceReasoning: string;
+  priceInputAudio: string;
+  priceOutputAudio: string;
   active: boolean;
 }
 
@@ -1198,10 +1295,21 @@ function emptyAddEntry(): AddEntryState {
     providerId: "",
     upstreamModelId: "",
     manualMode: false,
+    marginBps: "0",
     costInput: "",
     costOutput: "",
+    costCacheRead: "",
+    costCacheWrite: "",
+    costReasoning: "",
+    costInputAudio: "",
+    costOutputAudio: "",
     priceInput: "",
     priceOutput: "",
+    priceCacheRead: "",
+    priceCacheWrite: "",
+    priceReasoning: "",
+    priceInputAudio: "",
+    priceOutputAudio: "",
     active: true,
   };
 }
@@ -1262,24 +1370,88 @@ function AddEntryForm({ modelId, providers, onAdded }: AddEntryFormProps): React
         active: state.active,
       };
 
-      const cIn = toNonNegInt(state.costInput);
-      const cOut = toNonNegInt(state.costOutput);
+      let cIn: number;
+      let cOut: number;
       if (state.costInput !== "" || state.costOutput !== "") {
-        if (cIn === undefined || cOut === undefined) {
-          setError("Cost must be non-negative integers.");
+        try {
+          cIn = parseMajorToMicros(state.costInput === "" ? "0" : state.costInput);
+          cOut = parseMajorToMicros(state.costOutput === "" ? "0" : state.costOutput);
+        } catch {
+          setError("Cost input/output must be non-negative decimals (≤6 dp).");
           return;
         }
-        body.cost = { inputUnitsPerMillion: cIn, outputUnitsPerMillion: cOut };
+        const cost: TokenPriceSchedule = {
+          inputMicrosPerMillion: cIn,
+          outputMicrosPerMillion: cOut,
+        };
+        const optionalCost: Array<[keyof TokenPriceSchedule, string]> = [
+          ["cacheReadMicrosPerMillion", state.costCacheRead],
+          ["cacheWriteMicrosPerMillion", state.costCacheWrite],
+          ["reasoningMicrosPerMillion", state.costReasoning],
+          ["inputAudioMicrosPerMillion", state.costInputAudio],
+          ["outputAudioMicrosPerMillion", state.costOutputAudio],
+        ];
+        for (const [key, raw] of optionalCost) {
+          if (raw.trim() === "") continue;
+          try {
+            cost[key] = parseMajorToMicros(raw);
+          } catch {
+            setError("Optional cost rates must be non-negative decimals (≤6 dp).");
+            return;
+          }
+        }
+        body.cost = cost;
+      } else if (
+        state.costCacheRead !== "" ||
+        state.costCacheWrite !== "" ||
+        state.costReasoning !== "" ||
+        state.costInputAudio !== "" ||
+        state.costOutputAudio !== ""
+      ) {
+        setError("Set cost input/output before adding optional cost rates.");
+        return;
       }
 
-      const pIn = toNonNegInt(state.priceInput);
-      const pOut = toNonNegInt(state.priceOutput);
+      let pIn: number;
+      let pOut: number;
       if (state.priceInput !== "" || state.priceOutput !== "") {
-        if (pIn === undefined || pOut === undefined) {
-          setError("Price must be non-negative integers.");
+        try {
+          pIn = parseMajorToMicros(state.priceInput === "" ? "0" : state.priceInput);
+          pOut = parseMajorToMicros(state.priceOutput === "" ? "0" : state.priceOutput);
+        } catch {
+          setError("Price input/output must be non-negative decimals (≤6 dp).");
           return;
         }
-        body.price = { inputUnitsPerMillion: pIn, outputUnitsPerMillion: pOut };
+        const price: TokenPriceSchedule = {
+          inputMicrosPerMillion: pIn,
+          outputMicrosPerMillion: pOut,
+        };
+        const optionalPrice: Array<[keyof TokenPriceSchedule, string]> = [
+          ["cacheReadMicrosPerMillion", state.priceCacheRead],
+          ["cacheWriteMicrosPerMillion", state.priceCacheWrite],
+          ["reasoningMicrosPerMillion", state.priceReasoning],
+          ["inputAudioMicrosPerMillion", state.priceInputAudio],
+          ["outputAudioMicrosPerMillion", state.priceOutputAudio],
+        ];
+        for (const [key, raw] of optionalPrice) {
+          if (raw.trim() === "") continue;
+          try {
+            price[key] = parseMajorToMicros(raw);
+          } catch {
+            setError("Optional price rates must be non-negative decimals (≤6 dp).");
+            return;
+          }
+        }
+        body.price = price;
+      } else if (
+        state.priceCacheRead !== "" ||
+        state.priceCacheWrite !== "" ||
+        state.priceReasoning !== "" ||
+        state.priceInputAudio !== "" ||
+        state.priceOutputAudio !== ""
+      ) {
+        setError("Set price input/output before adding optional price rates.");
+        return;
       }
 
       setSubmitting(true);
@@ -1349,17 +1521,70 @@ function AddEntryForm({ modelId, providers, onAdded }: AddEntryFormProps): React
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Field id="ae-cin" label="Cost input (units/M, optional)">
-          <Input id="ae-cin" type="number" min={0} value={state.costInput} onChange={(e) => setState((s) => ({ ...s, costInput: e.target.value }))} disabled={submitting} />
+        <Field id="ae-margin" label="Margin (bps)" tooltip="Markup over cost (100 = 1%). Changing this re-derives price fields from cost; you can still edit price directly.">
+          <Input
+            id="ae-margin"
+            type="number"
+            min={0}
+            value={state.marginBps}
+            onChange={(e) => {
+              const marginBps = e.target.value;
+              setState((s) => ({
+                ...s,
+                marginBps,
+                priceInput: priceFromCostMargin(s.costInput, marginBps) ?? s.priceInput,
+                priceOutput: priceFromCostMargin(s.costOutput, marginBps) ?? s.priceOutput,
+                priceCacheRead: priceFromCostMargin(s.costCacheRead, marginBps) ?? s.priceCacheRead,
+                priceCacheWrite: priceFromCostMargin(s.costCacheWrite, marginBps) ?? s.priceCacheWrite,
+                priceReasoning: priceFromCostMargin(s.costReasoning, marginBps) ?? s.priceReasoning,
+                priceInputAudio: priceFromCostMargin(s.costInputAudio, marginBps) ?? s.priceInputAudio,
+                priceOutputAudio: priceFromCostMargin(s.costOutputAudio, marginBps) ?? s.priceOutputAudio,
+              }));
+            }}
+            disabled={submitting}
+          />
         </Field>
-        <Field id="ae-cout" label="Cost output (units/M, optional)">
-          <Input id="ae-cout" type="number" min={0} value={state.costOutput} onChange={(e) => setState((s) => ({ ...s, costOutput: e.target.value }))} disabled={submitting} />
+        <Field id="ae-cin" label="Cost input ($/M, optional)">
+          <Input id="ae-cin" type="number" min={0} step="any" value={state.costInput} onChange={(e) => setState((s) => ({ ...s, costInput: e.target.value }))} disabled={submitting} />
         </Field>
-        <Field id="ae-pin" label="Price input (units/M, optional)">
-          <Input id="ae-pin" type="number" min={0} value={state.priceInput} onChange={(e) => setState((s) => ({ ...s, priceInput: e.target.value }))} disabled={submitting} />
+        <Field id="ae-cout" label="Cost output ($/M, optional)">
+          <Input id="ae-cout" type="number" min={0} step="any" value={state.costOutput} onChange={(e) => setState((s) => ({ ...s, costOutput: e.target.value }))} disabled={submitting} />
         </Field>
-        <Field id="ae-pout" label="Price output (units/M, optional)">
-          <Input id="ae-pout" type="number" min={0} value={state.priceOutput} onChange={(e) => setState((s) => ({ ...s, priceOutput: e.target.value }))} disabled={submitting} />
+        <Field id="ae-ccr" label="Cost cache read ($/M)" tooltip="Optional. Requires cost input/output. Per-million rate for cache-hit input tokens.">
+          <Input id="ae-ccr" type="number" min={0} step="any" value={state.costCacheRead} placeholder="blank" onChange={(e) => setState((s) => ({ ...s, costCacheRead: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-ccw" label="Cost cache write ($/M)" tooltip="Optional. Requires cost input/output. Anthropic cache-creation tokens.">
+          <Input id="ae-ccw" type="number" min={0} step="any" value={state.costCacheWrite} placeholder="blank" onChange={(e) => setState((s) => ({ ...s, costCacheWrite: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-crs" label="Cost reasoning ($/M)" tooltip="Optional. Requires cost input/output. Hidden reasoning tokens.">
+          <Input id="ae-crs" type="number" min={0} step="any" value={state.costReasoning} placeholder="blank" onChange={(e) => setState((s) => ({ ...s, costReasoning: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-cain" label="Cost audio in ($/M)" tooltip="Optional. Requires cost input/output. Per-million rate for audio input tokens.">
+          <Input id="ae-cain" type="number" min={0} step="any" value={state.costInputAudio} placeholder="blank" onChange={(e) => setState((s) => ({ ...s, costInputAudio: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-caout" label="Cost audio out ($/M)" tooltip="Optional. Requires cost input/output. Per-million rate for audio output tokens.">
+          <Input id="ae-caout" type="number" min={0} step="any" value={state.costOutputAudio} placeholder="blank" onChange={(e) => setState((s) => ({ ...s, costOutputAudio: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-pin" label="Price input ($/M, optional)">
+          <Input id="ae-pin" type="number" min={0} step="any" value={state.priceInput} onChange={(e) => setState((s) => ({ ...s, priceInput: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-pout" label="Price output ($/M, optional)">
+          <Input id="ae-pout" type="number" min={0} step="any" value={state.priceOutput} onChange={(e) => setState((s) => ({ ...s, priceOutput: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-pcr" label="Price cache read ($/M)" tooltip="Optional. Requires price input/output. What the customer pays per million cache-hit tokens.">
+          <Input id="ae-pcr" type="number" min={0} step="any" value={state.priceCacheRead} placeholder="blank" onChange={(e) => setState((s) => ({ ...s, priceCacheRead: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-pcw" label="Price cache write ($/M)" tooltip="Optional. Requires price input/output. What the customer pays per million cache-creation tokens.">
+          <Input id="ae-pcw" type="number" min={0} step="any" value={state.priceCacheWrite} placeholder="blank" onChange={(e) => setState((s) => ({ ...s, priceCacheWrite: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-prs" label="Price reasoning ($/M)" tooltip="Optional. Requires price input/output. What the customer pays per million reasoning tokens.">
+          <Input id="ae-prs" type="number" min={0} step="any" value={state.priceReasoning} placeholder="blank" onChange={(e) => setState((s) => ({ ...s, priceReasoning: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-pain" label="Price audio in ($/M)" tooltip="Optional. Requires price input/output. What the customer pays per million audio input tokens.">
+          <Input id="ae-pain" type="number" min={0} step="any" value={state.priceInputAudio} placeholder="blank" onChange={(e) => setState((s) => ({ ...s, priceInputAudio: e.target.value }))} disabled={submitting} />
+        </Field>
+        <Field id="ae-paout" label="Price audio out ($/M)" tooltip="Optional. Requires price input/output. What the customer pays per million audio output tokens.">
+          <Input id="ae-paout" type="number" min={0} step="any" value={state.priceOutputAudio} placeholder="blank" onChange={(e) => setState((s) => ({ ...s, priceOutputAudio: e.target.value }))} disabled={submitting} />
         </Field>
       </div>
 

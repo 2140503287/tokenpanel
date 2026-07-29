@@ -4,13 +4,13 @@
 import { deleteJson, getJson, patchJson, postJson, putJson } from "./client.ts";
 
 export type TokenPriceSchedule = {
-  inputUnitsPerMillion: number;
-  outputUnitsPerMillion: number;
-  reasoningUnitsPerMillion?: number;
-  cacheReadUnitsPerMillion?: number;
-  cacheWriteUnitsPerMillion?: number;
-  inputAudioUnitsPerMillion?: number;
-  outputAudioUnitsPerMillion?: number;
+  inputMicrosPerMillion: number;
+  outputMicrosPerMillion: number;
+  reasoningMicrosPerMillion?: number;
+  cacheReadMicrosPerMillion?: number;
+  cacheWriteMicrosPerMillion?: number;
+  inputAudioMicrosPerMillion?: number;
+  outputAudioMicrosPerMillion?: number;
 };
 
 export type ModelEntry = {

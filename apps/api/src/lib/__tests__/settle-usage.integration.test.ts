@@ -51,14 +51,12 @@ let client: MongoClient | null = null;
 async function ensureConnected(): Promise<boolean> {
   if (connected) return true;
   try {
-    client = await new MongoClient(
-      "mongodb://tokenpanel:tokenpanel_dev@localhost:27017/?directConnection=true&replicaSet=rs0&authSource=admin",
-    ).connect();
+    const uri =
+      process.env.TEST_MONGODB_URI ??
+      "mongodb://tokenpanel:tokenpanel_dev@localhost:27017/?directConnection=true&replicaSet=rs0&authSource=admin";
+    client = await new MongoClient(uri).connect();
     await client.db("admin").command({ ping: 1 });
-    configureDb({
-      uri: "mongodb://tokenpanel:tokenpanel_dev@localhost:27017/?directConnection=true&replicaSet=rs0&authSource=admin",
-      databaseName: TEST_DB,
-    });
+    configureDb({ uri, databaseName: TEST_DB });
     connected = true;
     return true;
   } catch {
@@ -140,7 +138,7 @@ describe("settleUsage (live replica set)", () => {
       externalId: "c1",
       name: "c",
       email: null,
-      balance: { amountUnits: 10_000, currency: "USD", reservedUnits: 0 },
+      balance: { amountMicros: 10_000, currency: "USD", reservedMicros: 0 },
       status: "active",
       metadata: {},
       createdAt: new Date(),
@@ -181,7 +179,7 @@ describe("settleUsage (live replica set)", () => {
       attachment: false,
       limits: { context: 128000 },
       modalities: { input: ["text"], output: ["text"] },
-      price: { inputUnitsPerMillion: 0, outputUnitsPerMillion: 0 },
+      price: { inputMicrosPerMillion: 0, outputMicrosPerMillion: 0 },
       marginBps: 0,
       currency: "USD",
       active: true,
@@ -219,8 +217,8 @@ describe("settleUsage (live replica set)", () => {
         completionTokens: 50,
         totalTokens: 150,
       },
-      costUnits: 0,
-      priceUnits: 400,
+      costMicros: 0,
+      priceMicros: 400,
       currency: "USD",
       gatewayRequestId: "gw_settle_normal",
       status: 200,
@@ -229,12 +227,12 @@ describe("settleUsage (live replica set)", () => {
     });
 
     const customerAfter = await db.customers.findOne({ _id: customerId });
-    expect(customerAfter?.balance.amountUnits).toBe(9600);
+    expect(customerAfter?.balance.amountMicros).toBe(9600);
     const usageRows = await db.usageRecords.find({ gatewayRequestId: "gw_settle_normal" }).toArray();
     expect(usageRows).toHaveLength(1);
     const adjustments = await db.balanceAdjustments.find({ customerId }).toArray();
     expect(adjustments).toHaveLength(1);
-    expect(adjustments[0]?.amountUnits).toBe(-400);
+    expect(adjustments[0]?.amountMicros).toBe(-400);
     // usage_debit adjustments historically carry no usageRecordId link and no
     // note; the repo port preserves that (null, schema-compliant).
     expect(adjustments[0]?.usageRecordId).toBeNull();
@@ -264,7 +262,7 @@ describe("settleUsage (live replica set)", () => {
       externalId: "c2",
       name: "c",
       email: null,
-      balance: { amountUnits: 10_000, currency: "USD", reservedUnits: 0 },
+      balance: { amountMicros: 10_000, currency: "USD", reservedMicros: 0 },
       status: "active",
       metadata: {},
       createdAt: new Date(),
@@ -304,7 +302,7 @@ describe("settleUsage (live replica set)", () => {
       attachment: false,
       limits: { context: 128000 },
       modalities: { input: ["text"], output: ["text"] },
-      price: { inputUnitsPerMillion: 0, outputUnitsPerMillion: 0 },
+      price: { inputMicrosPerMillion: 0, outputMicrosPerMillion: 0 },
       marginBps: 0,
       currency: "USD",
       active: true,
@@ -327,8 +325,8 @@ describe("settleUsage (live replica set)", () => {
       provider,
       protocol: "openai" as const,
       usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-      costUnits: 0,
-      priceUnits: 300,
+      costMicros: 0,
+      priceMicros: 300,
       currency: "USD",
       gatewayRequestId: "gw_settle_idem",
       status: 200,
@@ -340,7 +338,7 @@ describe("settleUsage (live replica set)", () => {
     await settleUsage(base);
 
     const customerAfter = await db.customers.findOne({ _id: customerId });
-    expect(customerAfter?.balance.amountUnits).toBe(9700);
+    expect(customerAfter?.balance.amountMicros).toBe(9700);
     const usageRows = await db.usageRecords.find({ gatewayRequestId: "gw_settle_idem" }).toArray();
     expect(usageRows).toHaveLength(1);
   });
@@ -365,7 +363,7 @@ describe("settleUsage (live replica set)", () => {
       externalId: "c3",
       name: "c",
       email: null,
-      balance: { amountUnits: 100, currency: "USD", reservedUnits: 0 },
+      balance: { amountMicros: 100, currency: "USD", reservedMicros: 0 },
       status: "active",
       metadata: {},
       createdAt: new Date(),
@@ -405,7 +403,7 @@ describe("settleUsage (live replica set)", () => {
       attachment: false,
       limits: { context: 128000 },
       modalities: { input: ["text"], output: ["text"] },
-      price: { inputUnitsPerMillion: 0, outputUnitsPerMillion: 0 },
+      price: { inputMicrosPerMillion: 0, outputMicrosPerMillion: 0 },
       marginBps: 0,
       currency: "USD",
       active: true,
@@ -429,8 +427,8 @@ describe("settleUsage (live replica set)", () => {
         provider,
         protocol: "openai",
         usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
-        costUnits: 0,
-        priceUnits: 5000, // exceeds 100 units balance
+        costMicros: 0,
+        priceMicros: 5000, // exceeds 100 units balance
         currency: "USD",
         gatewayRequestId: "gw_settle_guard",
         status: 200,
@@ -442,7 +440,7 @@ describe("settleUsage (live replica set)", () => {
 
     // No partial charge: balance unchanged, no usage record, no adjustment.
     const customerAfter = await db.customers.findOne({ _id: customerId });
-    expect(customerAfter?.balance.amountUnits).toBe(100);
+    expect(customerAfter?.balance.amountMicros).toBe(100);
     const usageRows = await db.usageRecords.find({ gatewayRequestId: "gw_settle_guard" }).toArray();
     expect(usageRows).toHaveLength(0);
     const adjustments = await db.balanceAdjustments.find({ customerId }).toArray();

@@ -6,6 +6,7 @@ import {
   type CatalogSourceSummary,
   type FetchedModel,
 } from "../api/catalog.ts";
+import { formatMicrosToMajor, minorToMicros } from "@tokenpanel/contracts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -44,9 +45,12 @@ interface SearchEntry {
 }
 
 function formatPrice(m: FetchedModel): string {
-  return m.cost
-    ? `$${(m.cost.inputUnitsPerMillion / 100).toFixed(2)} / $${(m.cost.outputUnitsPerMillion / 100).toFixed(2)}`
-    : "no price";
+  if (!m.cost) return "no price";
+  // Catalog cost is USD cents (minor units); render via the integer-exact
+  // micros codec rather than a float divide. Catalog is always USD (2dp).
+  const input = formatMicrosToMajor(minorToMicros(m.cost.inputUnitsPerMillion, 2));
+  const output = formatMicrosToMajor(minorToMicros(m.cost.outputUnitsPerMillion, 2));
+  return `$${input} / $${output}`;
 }
 
 function buildKey(m: FetchedModel): string {

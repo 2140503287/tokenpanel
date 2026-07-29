@@ -120,11 +120,11 @@ export const createPlan = (input: {
   readonly organizationId: HexId;
   readonly name: string;
   readonly description?: string | null | undefined;
-  readonly price: { readonly amountUnits: number; readonly currency: string };
+  readonly price: { readonly amountMicros: number; readonly currency: string };
   readonly interval: string;
   readonly intervalCount: number;
   readonly includedCredit?:
-    | { readonly amountUnits: number; readonly currency: string }
+    | { readonly amountMicros: number; readonly currency: string }
     | undefined;
   readonly includedTokens?: number | undefined;
   readonly rateLimits?: readonly RateLimitRuleInput[] | undefined;
@@ -151,13 +151,13 @@ export const createPlan = (input: {
       name: input.name,
       description: input.description ?? null,
       price: {
-        amountUnits: input.price.amountUnits,
+        amountMicros: input.price.amountMicros,
         currency,
       },
       interval: input.interval,
       intervalCount: input.intervalCount,
       includedCredit: {
-        amountUnits: input.includedCredit?.amountUnits ?? 0,
+        amountMicros: input.includedCredit?.amountMicros ?? 0,
         currency,
       },
       includedTokens: input.includedTokens ?? 0,
@@ -203,9 +203,9 @@ export const updatePlan = (input: {
       typeof $set.price === "object" &&
       $set.price !== null
     ) {
-      const p = $set.price as { amountUnits?: number; currency?: string };
+      const p = $set.price as { amountMicros?: number; currency?: string };
       $set.price = {
-        amountUnits: p.amountUnits ?? existing.price.amountUnits,
+        amountMicros: p.amountMicros ?? existing.price.amountMicros,
         currency: existing.price.currency,
       };
     }
@@ -215,11 +215,11 @@ export const updatePlan = (input: {
       $set.includedCredit !== null
     ) {
       const c = $set.includedCredit as {
-        amountUnits?: number;
+        amountMicros?: number;
         currency?: string;
       };
       $set.includedCredit = {
-        amountUnits: c.amountUnits ?? existing.includedCredit.amountUnits,
+        amountMicros: c.amountMicros ?? existing.includedCredit.amountMicros,
         currency: existing.includedCredit.currency,
       };
     }

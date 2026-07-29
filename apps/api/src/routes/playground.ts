@@ -17,6 +17,7 @@ import { billingAppError } from "../lib/billing-errors.ts";
 import { resolveModelOp } from "../domains/billing/workflow.ts";
 import { getEffectiveRulesOp } from "../domains/limits/operations.ts";
 import type { ChatRequest, ChatMessage, ContentPart } from "../providers/index.ts";
+import { toOpenAIFinishReason, toOpenAIToolCallDeltas } from "../providers/index.ts";
 import {
   applyDoneUsage,
   classifyGenerationFailure,
@@ -51,14 +52,53 @@ playground.use("*", requireAuth, requirePermission("playground:write"));
 type PlaygroundMessage = PlaygroundChatBody["messages"][number];
 
 function translateMessage(m: PlaygroundMessage): ChatMessage {
-  let content: string | ContentPart[];
-  if (typeof m.content === "string") {
+  let content: string | ContentPart[] | null;
+  if (m.content === null || m.content === undefined) {
+    content = null;
+  } else if (typeof m.content === "string") {
     content = m.content;
   } else {
-    content = m.content.map((part) => {
-      if (part.type === "text") return { type: "text", text: part.text ?? "" };
-      if (part.type === "image_url") return { type: "image_url", imageUrl: part.image_url ?? { url: "" } };
-      return { type: "input_audio", inputData: part.input_audio?.data ?? "" };
+    content = m.content.flatMap((part): ContentPart[] => {
+      switch (part.type) {
+        case "text":
+          return [{ type: "text", text: part.text ?? "" }];
+        case "image_url":
+          return part.image_url
+            ? [
+                {
+                  type: "image_url",
+                  imageUrl: {
+                    url: part.image_url.url,
+                    ...(part.image_url.detail !== undefined ? { detail: part.image_url.detail } : {}),
+                  },
+                },
+              ]
+            : [];
+        case "input_audio":
+          return part.input_audio
+            ? [
+                {
+                  type: "input_audio",
+                  inputData: { data: part.input_audio.data, format: part.input_audio.format },
+                },
+              ]
+            : [];
+        case "file":
+          return part.file
+            ? [
+                {
+                  type: "file",
+                  file: {
+                    ...(part.file.file_id !== undefined ? { fileId: part.file.file_id } : {}),
+                    ...(part.file.file_data !== undefined ? { fileData: part.file.file_data } : {}),
+                    ...(part.file.filename !== undefined ? { filename: part.file.filename } : {}),
+                  },
+                },
+              ]
+            : [];
+        default:
+          return [];
+      }
     });
   }
   return {
@@ -69,16 +109,25 @@ function translateMessage(m: PlaygroundMessage): ChatMessage {
   };
 }
 
-function formatError(code: string, message: string, extra?: Record<string, unknown>) {
+function formatError(code: string, message: string, extra?: Record<string, unknown>, status?: number) {
+  const type =
+    status === 401
+      ? "authentication_error"
+      : status === 403
+        ? "permission_error"
+        : status === 404
+          ? "not_found_error"
+          : status === 429
+            ? "rate_limit_error"
+            : status !== undefined && status >= 500
+              ? "api_error"
+              : code === "rate_limited"
+                ? "rate_limit_error"
+                : "invalid_request_error";
   return {
     error: {
       message,
-      type:
-        code === "rate_limited"
-          ? "rate_limit_error"
-          : code === "insufficient_balance"
-            ? "billing_error"
-            : "invalid_request_error",
+      type,
       code,
       ...(extra ?? {}),
     },
@@ -184,26 +233,27 @@ function playgroundCompletionJson(
       index: ch.index,
       message: {
         role: ch.message.role,
-        content: ch.message.content,
+        content: ch.message.content ?? null,
+        refusal: ch.message.refusal ?? null,
         reasoning_content: ch.message.reasoning,
-        tool_calls: ch.message.toolCalls,
+        ...(ch.message.toolCalls !== undefined ? { tool_calls: ch.message.toolCalls } : {}),
       },
-      finish_reason: ch.finishReason,
+      finish_reason: toOpenAIFinishReason(ch.finishReason),
     })),
     usage: {
       prompt_tokens: r.usage.promptTokens,
       completion_tokens: r.usage.completionTokens,
       total_tokens: r.usage.totalTokens,
       ...(r.usage.reasoningTokens !== undefined
-        ? { reasoning_tokens: r.usage.reasoningTokens }
+        ? { completion_tokens_details: { reasoning_tokens: r.usage.reasoningTokens } }
         : {}),
       ...(r.usage.cacheReadTokens !== undefined
         ? { prompt_tokens_details: { cached_tokens: r.usage.cacheReadTokens } }
         : {}),
     },
     cost: {
-      costUnits: result.charges.costUnits,
-      priceUnits: result.charges.priceUnits,
+      costMicros: result.charges.costMicros,
+      priceMicros: result.charges.priceMicros,
       currency: result.charges.currency,
     },
     billed,
@@ -249,9 +299,9 @@ playground.post("/chat", sValidator("json", PlaygroundChatBody), async (c) => {
           rules: p.ctx.rules,
           protocol: "openai",
           reservation: null,
-          reservedUnits: 0,
+          reservedMicros: 0,
           startedAtMs: Date.now(),
-          priceUnitsOverride: p.ctx.customer ? undefined : 0,
+          priceMicrosOverride: p.ctx.customer ? undefined : 0,
           signal: abortSignal,
         });
         return playgroundCompletionJson(
@@ -289,7 +339,7 @@ playground.post("/chat", sValidator("json", PlaygroundChatBody), async (c) => {
     customerId: ctx.customer?._id ?? null,
     apiKeyId: null,
   };
-  const priceUnitsOverride = ctx.customer ? undefined : 0;
+  const priceMicrosOverride = ctx.customer ? undefined : 0;
 
   c.header("Content-Type", "text/event-stream");
   c.header("Cache-Control", "no-cache");
@@ -307,9 +357,9 @@ playground.post("/chat", sValidator("json", PlaygroundChatBody), async (c) => {
     rules,
     protocol: "openai",
     reservation: null,
-    reservedUnits: 0,
+    reservedMicros: 0,
     startedAtMs: start,
-    priceUnitsOverride,
+    priceMicrosOverride,
     signal: abortSignal,
   });
 
@@ -318,6 +368,7 @@ playground.post("/chat", sValidator("json", PlaygroundChatBody), async (c) => {
   const usage = emptyStreamUsage("openai");
   let terminalErrorEmitted = false;
   let clientDisconnected = false;
+  let roleSent = false;
 
   const onAbort = () => {
     clientDisconnected = true;
@@ -382,9 +433,17 @@ playground.post("/chat", sValidator("json", PlaygroundChatBody), async (c) => {
           session.noteChunk(entry.id, chunk);
           if (chunk.type === "delta") {
             const delta: Record<string, unknown> = {};
+            if (!roleSent) {
+              delta.role = "assistant";
+              roleSent = true;
+            }
             if (chunk.delta?.content !== undefined) delta.content = chunk.delta.content;
             if (chunk.delta?.reasoning !== undefined) delta.reasoning_content = chunk.delta.reasoning;
-            if (chunk.delta?.toolCalls !== undefined) delta.tool_calls = chunk.delta.toolCalls;
+            if (chunk.delta?.toolCalls !== undefined) {
+              delta.tool_calls = toOpenAIToolCallDeltas(
+                chunk.delta.toolCalls as Record<string, unknown>[],
+              );
+            }
             enqueue({
               id,
               object: "chat.completion.chunk",
@@ -415,7 +474,7 @@ playground.post("/chat", sValidator("json", PlaygroundChatBody), async (c) => {
             object: "chat.completion.chunk",
             created,
             model: body.model,
-            choices: [{ index: 0, delta: {}, finish_reason: usage.finishReason }],
+            choices: [{ index: 0, delta: {}, finish_reason: toOpenAIFinishReason(usage.finishReason) }],
           });
           if (usage.promptTokens > 0 || usage.completionTokens > 0) {
             const total =
@@ -432,7 +491,9 @@ playground.post("/chat", sValidator("json", PlaygroundChatBody), async (c) => {
                 prompt_tokens: usage.promptTokens,
                 completion_tokens: usage.completionTokens,
                 total_tokens: total,
-                ...(usage.reasoningTokens > 0 ? { reasoning_tokens: usage.reasoningTokens } : {}),
+                ...(usage.reasoningTokens > 0
+                  ? { completion_tokens_details: { reasoning_tokens: usage.reasoningTokens } }
+                  : {}),
                 ...(usage.cacheReadTokens > 0
                   ? { prompt_tokens_details: { cached_tokens: usage.cacheReadTokens } }
                   : {}),
@@ -467,8 +528,8 @@ playground.post("/chat", sValidator("json", PlaygroundChatBody), async (c) => {
                 sdkType: activeProvider.sdkType,
               },
               cost: {
-                costUnits: charges.costUnits,
-                priceUnits: charges.priceUnits,
+                costMicros: charges.costMicros,
+                priceMicros: charges.priceMicros,
                 currency: charges.currency,
               },
               billed,

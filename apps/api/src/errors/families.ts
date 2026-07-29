@@ -96,8 +96,8 @@ export class InsufficientBalanceError extends Data.TaggedError(
 )<{
   readonly code: "insufficient_balance" | "currency_mismatch";
   readonly message: string;
-  readonly balanceUnits?: number;
-  readonly requiredUnits?: number;
+  readonly balanceMicros?: number;
+  readonly requiredMicros?: number;
   readonly currency?: string;
   readonly balanceCurrency?: string;
   readonly modelCurrency?: string;

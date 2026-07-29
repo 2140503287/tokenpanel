@@ -222,11 +222,12 @@ export const UsageRepoLive: Layer.Layer<UsageRepo, never, MongoDb> =
             const filter: Record<string, unknown> = {
               organizationId,
               customerId,
-              // spend_units dual-read: legacy counters may still say spend_minor
-              // until post/ remaps (swap→post window).
+              // spend dual-read: pre/ scales counter values in place but keeps
+              // dimension "spend_units"; post/ renames to "spend_micros". Match
+              // both so a window spanning the swap sums one consistent stream.
               dimension:
-                dimension === "spend_units"
-                  ? { $in: ["spend_units", "spend_minor"] }
+                dimension === "spend_units" || dimension === "spend_micros"
+                  ? { $in: ["spend_units", "spend_micros"] }
                   : dimension,
               windowSeconds,
               bucketStart,
@@ -281,8 +282,8 @@ export const UsageRepoLive: Layer.Layer<UsageRepo, never, MongoDb> =
             const mongoFilter: Record<string, unknown> = {
               customerId: filter.customerId,
               dimension:
-                filter.dimension === "spend_units"
-                  ? { $in: ["spend_units", "spend_minor"] }
+                filter.dimension === "spend_units" || filter.dimension === "spend_micros"
+                  ? { $in: ["spend_units", "spend_micros"] }
                   : filter.dimension,
               windowSeconds: filter.windowSeconds,
               bucketStart: { $gte: filter.windowStart },
@@ -301,15 +302,21 @@ export const UsageRepoLive: Layer.Layer<UsageRepo, never, MongoDb> =
             if (params.entries.length === 0) return;
             const now = new Date();
             const ops = params.entries.map((e) => {
+              // Normalize the money dimension to spend_micros at the write
+              // boundary. New code always increments counters in micros, so it
+              // must never write into a spend_units-labelled bucket: the post
+              // migration scales every spend_units counter by the currency
+              // factor, and a micros value written under that label would be
+              // over-scaled ×factor. Writing spend_micros keeps new buckets
+              // distinct from the legacy spend_units buckets the post migration
+              // owns. Reads still $in-match both labels (findWindowCounters) so
+              // the rolling window sums one stream across the swap.
+              const dimension =
+                e.dimension === "spend_units" ? "spend_micros" : e.dimension;
               const filter = {
                 organizationId: params.organizationId,
                 customerId: params.customerId,
-                // Match legacy spend_minor rows so we $inc the existing counter
-                // instead of creating a parallel spend_units stream mid-window.
-                dimension:
-                  e.dimension === "spend_units"
-                    ? { $in: ["spend_units", "spend_minor"] }
-                    : e.dimension,
+                dimension,
                 windowSeconds: e.windowSeconds,
                 bucketStart: e.bucketStart,
                 scopeTarget: e.scopeTarget,
@@ -325,7 +332,7 @@ export const UsageRepoLive: Layer.Layer<UsageRepo, never, MongoDb> =
                       $setOnInsert: {
                         organizationId: params.organizationId,
                         customerId: params.customerId,
-                        dimension: e.dimension,
+                        dimension,
                         windowSeconds: e.windowSeconds,
                         bucketStart: e.bucketStart,
                         scopeTarget: e.scopeTarget,

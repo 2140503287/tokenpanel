@@ -39,7 +39,7 @@ turbo.json                       task pipeline (build/dev/lint/typecheck/clean)
 - **`@tokenpanel/config`** is the single source of truth for runtime/deploy config keys (`packages/config/src/fields.ts`). Never add env vars or operator settings manually to templates, `.env.example`, manager allowlists, or preflight lists. Add the field definition, then run `bun run config:generate`. Generated files under `manager/release/` must be committed.
 - **`@tokenpanel/contracts`**: pure TypeScript/Effect Schema product contracts (model modality/status/metadata policy, management scopes). No env, I/O, Node, Mongo, or UI. Admin may import it; never import `@tokenpanel/db` into admin. Migrations must not import live contracts (keep frozen snapshots).
 - DB schemas live in `packages/db/src/schemas/*.ts`. Each domain exports `…Doc` (stored shape, with `_id`, `createdAt`, `updatedAt`) and `…CreateInput` (input shape, ObjectId as string → coerced). Use `getDb()` to get a `TypedDb` whose collections are already typed; never call `db.collection("string")` directly outside `packages/db`. Call `configureDb({ uri, databaseName })` before `getDb()` from executables (API boot, migrator CLI).
-- Money is stored as integer units (`amountUnits`) + ISO currency code, never floats.
+- Money is stored as integer micros (`amountMicros`, 10⁻⁶ of the major currency unit) + ISO currency code, never floats. Admin inputs decimal major units; the codec (`packages/contracts/src/money-micros.ts`) converts at the boundary.
 - Env/config: Bun auto-loads `.env` for local dev; no dotenv import. API parses once via `parseApiRuntimeConfig` (`apps/api/src/config/runtime.ts`). Production deployments use operator config `/etc/tokenpanel/tokenpanel.yml`; `tokenpanel-setup` and `tokenpanel update` render `/etc/tokenpanel/generated/{compose.yml,.env,manager.env,Caddyfile,release.json}` from the target release. Legacy `/etc/tokenpanel/.env` is auto-migrated to `tokenpanel.yml`. Required API config still includes `JWT_SECRET` and a MongoDB URI (generated from `database.*` unless overridden).
 - API fail-fast: server exits if config invalid or MongoDB is unreachable on boot.
 - **Migrations**: ordered, timestamped migration files in `packages/db/migrations/{pre,post}/`.
@@ -94,6 +94,14 @@ bun --filter @tokenpanel/api dev    # run one workspace's dev
 `compose.yml` boots MongoDB 8 (single-node replica set) + api + admin with
 hot-reload bind-mounts. Bun scripts wrap `docker compose`:
 
+> **MongoDB source of truth (hard rule):** ALWAYS use this project's Docker
+> Compose MongoDB for local dev and testing. NEVER connect to, start, or rely on
+> a globally/host-installed `mongod` (e.g. a system service on `:27017`). The
+> compose MongoDB is the only sanctioned instance — it is a single-node replica
+> set with the project credentials, which transactions and the migration runner
+> require. If `:27017` is occupied by a non-compose mongod, stop it or remap
+> `MONGO_HOST_PORT`; do not test against it.
+
 ```bash
 bun run docker:start    # build + up -d (reuses mongo volume)
 bun run docker:restart  # force-recreate containers (keeps data)
@@ -116,9 +124,10 @@ bun run docker:ps       # container status
 - Mongo exposed on host `:27017` (`MONGO_HOST_PORT` to remap). api `:3000`,
   admin `:5173`.
 - `docker:reset` is destructive: drops the `tokenpanel-mongo` volume.
-- For non-Docker dev (`bun run dev`), start local mongod with `--replSet rs0`
-  and initiate it (`mongosh --eval 'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'`)
-  to enable transaction support.
+- Non-Docker dev (`bun run dev`) still connects to the **compose** MongoDB on
+  host `:27017` — start it with `bun run docker:start` first. Do NOT start a
+  separate/global `mongod`; the compose `mongo` service (replica set `rs0`,
+  initiated by `mongo-init`) is the only supported local database.
 
 ### Deployment Manager
 

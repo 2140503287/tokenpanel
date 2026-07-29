@@ -3,16 +3,18 @@
 #
 # Discourse-style update (tokenpanel update):
 #   Phase 4 → run_migrations_image pre  <new_tag>   (old container still serving)
-#   Phase 5 → swap containers
-#   Phase 6 → run_migrations post                     (live new container)
+#   Phase 5 → stop old container (downtime begins)
+#   Phase 6 → write-quiet cutover backup, then run_migrations_image post <new_tag>
+#             (no concurrent readers/writers; backup is the rollback net)
+#   Phase 7 → swap: start the new container on the fully-migrated schema
 #
 # Tracking: packages/db migrator writes each applied id+checksum into the
 # `_migrations` collection. Re-running pre or post is safe — already-applied
 # files are skipped; edited-after-apply files abort with a checksum error.
-# There is no RUN_POST_MIGRATIONS env gate: post always runs after the api is
-# healthy on every bring-up path that is supposed to leave a fully-migrated
-# schema. Call sites (all idempotent via `_migrations`):
-#   - tokenpanel update        Phase 6 (after swap)
+# There is no RUN_POST_MIGRATIONS env gate: post runs on every bring-up path
+# that must leave a fully-migrated schema. Call sites (all idempotent via
+# `_migrations`):
+#   - tokenpanel update        Phase 6 (write-quiet, BEFORE swap; old stopped)
 #   - tokenpanel start         after health
 #   - tokenpanel rebuild       after force-recreate + health
 #   - tokenpanel-setup         after first-start health
@@ -24,14 +26,14 @@
 # Two entry points:
 #   run_migrations <phase>
 #       spawn a named one-shot container from the image currently selected by
-#       Compose. Used for post-deploy migrations (all call sites above) and
-#       standalone `tokenpanel migrate`; this makes cancellation targetable.
+#       Compose. Used for post-deploy migrations (start/rebuild/setup/migrate)
+#       and standalone `tokenpanel migrate`; this makes cancellation targetable.
 #   run_migrations_image <phase> <image_tag>
 #       spawn a one-shot container from a *specific* pre-built image
 #       (tokenpanel/app:<tag>) on the same compose network/env, without
 #       touching the running container. Used for pre-deploy migrations
-#       (Phase 4): the new image contains the new migration files; the old
-#       container keeps serving while they apply.
+#       (Phase 4, old container still serving) and the update post migration
+#       (Phase 6, old container stopped so nothing reads/writes concurrently).
 
 migration_timeout_seconds() {
   case "$1" in

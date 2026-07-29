@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { toApiRule, validateDraft, formatWindow, formatAmountUnits } from "../PlansPage.tsx";
+import { toApiRule, validateDraft, formatWindow, formatAmountMicros } from "../PlansPage.tsx";
 
 function draft(over: Record<string, unknown> = {}) {
   return {
@@ -17,11 +17,13 @@ function draft(over: Record<string, unknown> = {}) {
   } as never;
 }
 
-test("toApiRule: currency uppercase for spend_units, undefined for others", () => {
-  const r1 = toApiRule({ id: "x", windowSeconds: "3600", dimension: "spend_units", capValue: "100", scope: "customer", scopeTarget: "", currency: "usd", active: true } as never);
+test("toApiRule: currency uppercase + decimal cap → micros for spend, undefined currency for others", () => {
+  const r1 = toApiRule({ id: "x", windowSeconds: "3600", dimension: "spend_micros", capValue: "100", scope: "customer", scopeTarget: "", currency: "usd", active: true } as never);
   expect(r1.currency).toBe("USD");
+  expect(r1.capValue).toBe(100_000_000); // 100 USD → micros
   const r2 = toApiRule({ id: "x", windowSeconds: "3600", dimension: "tokens", capValue: "100", scope: "customer", scopeTarget: "", currency: "USD", active: true } as never);
   expect(r2.currency).toBeUndefined();
+  expect(r2.capValue).toBe(100); // tokens: raw count
 });
 
 test("toApiRule: empty scopeTarget → undefined; id empty → undefined", () => {
@@ -45,9 +47,9 @@ test("validateDraft: empty name → error", () => {
   expect(validateDraft(draft({ name: "  " }))).toBeTruthy();
 });
 
-test("validateDraft: price not non-neg int → error", () => {
+test("validateDraft: price not non-neg decimal → error", () => {
   expect(validateDraft(draft({ priceAmount: "-1" }))).toBeTruthy();
-  expect(validateDraft(draft({ priceAmount: "1.5" }))).toBeTruthy();
+  expect(validateDraft(draft({ priceAmount: "abc" }))).toBeTruthy();
 });
 
 test("validateDraft: price currency not 3-letter → error", () => {
@@ -150,14 +152,14 @@ test("formatWindow: fallback seconds", () => {
   expect(formatWindow(7260)).toBe("7260s");
 });
 
-test("formatAmountUnits: uses ISO-aware formatMoney (USD cents)", () => {
-  expect(formatAmountUnits(1000, "USD")).toBe("$10.00 USD");
-  expect(formatAmountUnits(0, "USD")).toBe("$0.00 USD");
-  expect(formatAmountUnits(12345, "USD")).toBe("$123.45 USD");
-  expect(formatAmountUnits(5, "USD")).toBe("$0.05 USD");
+test("formatAmountMicros: renders micros as ISO-aware money", () => {
+  expect(formatAmountMicros(1_000_000_000, "USD")).toBe("$1000.00 USD");
+  expect(formatAmountMicros(0, "USD")).toBe("$0.00 USD");
+  expect(formatAmountMicros(123_450_000, "USD")).toBe("$123.45 USD");
+  expect(formatAmountMicros(50_000, "USD")).toBe("$0.05 USD");
 });
 
-test("formatAmountUnits: zero-decimal JPY / BIF not divided by 100", () => {
-  expect(formatAmountUnits(1234, "JPY")).toBe("\u00a51234 JPY");
-  expect(formatAmountUnits(500, "BIF")).toBe("500 BIF");
+test("formatAmountMicros: zero-decimal JPY / BIF", () => {
+  expect(formatAmountMicros(1_234_000_000, "JPY")).toBe("\u00a51234 JPY");
+  expect(formatAmountMicros(500_000_000, "BIF")).toBe("500 BIF");
 });

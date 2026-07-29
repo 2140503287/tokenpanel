@@ -188,10 +188,11 @@ test("assembleChoice: role defaults to assistant when missing", () => {
   expect(c?.message.role).toBe("assistant");
 });
 
-test("assembleChoice: includes toolCalls when present, refusal overrides content", () => {
+test("assembleChoice: toolCalls preserved; refusal kept separate from content (spec fields)", () => {
   const c = assembleChoice({ message: { role: "assistant", content: "orig", tool_calls: [{ id: "t1" }], refusal: "blocked" } }, 0);
   expect(c?.message.toolCalls).toEqual([{ id: "t1" }]);
-  expect(c?.message.content).toBe("blocked");
+  expect(c?.message.content).toBe("orig");
+  expect(c?.message.refusal).toBe("blocked");
 });
 
 test("assembleChoice: returns null on missing/invalid raw or message", () => {

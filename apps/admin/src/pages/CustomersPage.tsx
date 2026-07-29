@@ -7,7 +7,7 @@ import {
   type FormEvent,
 } from "react";
 import { ApiError, deleteJson, getJson, patchJson, postJson } from "../api/client.ts";
-import { formatDate, formatMoney, formatNumber } from "../utils/format.ts";
+import { formatDate, formatMicros, formatNumber } from "../utils/format.ts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -54,11 +54,12 @@ import { hasPermission, useAuth } from "../auth/AuthContext.tsx";
 
 import {
   CUSTOMER_STATUSES,
+  parseMajorToMicros,
   type CustomerStatus,
 } from "@tokenpanel/contracts";
 
 interface Money {
-  amountUnits: number;
+  amountMicros: number;
   currency: string;
 }
 
@@ -79,7 +80,7 @@ interface Customer {
 
 interface BalanceAdjustment {
   _id: string;
-  amountUnits: number;
+  amountMicros: number;
   currency: string;
   reason: "topup" | "usage_debit" | "refund" | "adjustment" | "overage";
   note: string | null;
@@ -130,15 +131,15 @@ interface UsageByModel {
   modelAliasId: string;
   requests: number;
   tokens: number;
-  costUnits: number;
-  priceUnits: number;
+  costMicros: number;
+  priceMicros: number;
 }
 
 interface UsageResponse {
   totalRequests: number;
   totalTokens: number;
-  totalCostUnits: number;
-  totalPriceUnits: number;
+  totalCostMicros: number;
+  totalPriceMicros: number;
   currency: string;
   byModel: UsageByModel[];
 }
@@ -373,8 +374,8 @@ export default function CustomersPage(): React.ReactElement {
                     <TableCell className={cn(c.email ? "text-muted-foreground" : "text-muted-foreground/60")}>{c.email || "—"}</TableCell>
                     <TableCell className={cn("font-mono text-xs", c.externalId ? "text-muted-foreground" : "text-muted-foreground/60")}>{c.externalId || "—"}</TableCell>
                     {canReadBalances ? (
-                      <TableCell className={cn("font-semibold tabular-nums", c.balance && c.balance.amountUnits < 0 && "text-destructive")}>
-                        {c.balance ? formatMoney(c.balance.amountUnits, c.balance.currency) : "—"}
+                      <TableCell className={cn("font-semibold tabular-nums", c.balance && c.balance.amountMicros < 0 && "text-destructive")}>
+                        {c.balance ? formatMicros(c.balance.amountMicros, c.balance.currency) : "—"}
                       </TableCell>
                     ) : null}
                     <TableCell><Badge variant={statusVariant(c.status)}>{c.status}</Badge></TableCell>
@@ -516,7 +517,7 @@ function CustomerDrawer({ customer, onClose, onUpdated, onDeleted }: DrawerProps
             {canReadBalances ? (
               <>
                 <div className="text-muted-foreground">Balance</div>
-                <div className="text-2xl font-bold tabular-nums">{customer.balance ? formatMoney(customer.balance.amountUnits, customer.balance.currency) : "—"}</div>
+                <div className="text-2xl font-bold tabular-nums">{customer.balance ? formatMicros(customer.balance.amountMicros, customer.balance.currency) : "—"}</div>
               </>
             ) : null}
             <div className="text-muted-foreground">Status</div><div><Badge variant={statusVariant(customer.status)}>{customer.status}</Badge></div>
@@ -622,7 +623,7 @@ function BalanceCard({
           </Button>
         ) : null}
       </div>
-      <div className="text-2xl font-bold tabular-nums">{formatMoney(balance.amountUnits, balance.currency)}</div>
+      <div className="text-2xl font-bold tabular-nums">{formatMicros(balance.amountMicros, balance.currency)}</div>
       <div>
         <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Recent adjustments</div>
         {loadingHistory && history.length === 0 ? (
@@ -640,8 +641,8 @@ function BalanceCard({
                   {a.note ? <span className="text-xs text-muted-foreground">{a.note}</span> : null}
                 </div>
                 <div className="text-xs text-muted-foreground">{formatDate(a.occurredAt)}</div>
-                <div className={cn("text-right font-semibold tabular-nums", a.amountUnits < 0 && "text-destructive")}>
-                  {formatMoney(a.amountUnits, a.currency)}
+                <div className={cn("text-right font-semibold tabular-nums", a.amountMicros < 0 && "text-destructive")}>
+                  {formatMicros(a.amountMicros, a.currency)}
                 </div>
               </div>
             ))}
@@ -687,19 +688,21 @@ function BalanceForm({ customerId, currency, onClose, onSaved }: BalanceFormProp
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
-    const amountUnits = Number(amount);
-    if (!Number.isInteger(amountUnits)) {
-      setError("Amount must be a whole number of units.");
+    let amountMicros: number;
+    try {
+      amountMicros = parseMajorToMicros(amount, { allowNegative: true });
+    } catch {
+      setError("Amount must be a decimal in major units (≤6 dp).");
       return;
     }
-    if (amountUnits === 0) {
+    if (amountMicros === 0) {
       setError("Amount cannot be zero.");
       return;
     }
     setSubmitting(true);
     try {
       const res = await postJson<BalanceAdjustmentResponse>(`/admin/customers/${customerId}/balance`, {
-        amountUnits,
+        amountMicros,
         currency: cur,
         reason,
         note: note.trim() || undefined,
@@ -721,9 +724,9 @@ function BalanceForm({ customerId, currency, onClose, onSaved }: BalanceFormProp
       <form className="flex flex-col gap-4" onSubmit={onSubmit}>
         <div className="flex gap-3">
           <div className="flex-1">
-            <Field id="bal-amount" label="Amount (units)" tooltip="Integer units. 1 unit = $0.01 USD (varies by currency exponent). Positive = credit, negative = debit.">
-              <Input id="bal-amount" type="number" step="1" value={amount} required disabled={submitting} onChange={(e) => setAmount(e.target.value)} />
-              <UnitsPreview value={amount} currency={cur} />
+            <Field id="bal-amount" label="Amount" tooltip="Decimal major units (e.g. 25.50 = $25.50 USD). Positive = credit, negative = debit.">
+              <Input id="bal-amount" type="number" step="any" value={amount} required disabled={submitting} onChange={(e) => setAmount(e.target.value)} />
+              <UnitsPreview value={amount} currency={cur} allowNegative />
             </Field>
           </div>
           <div className="flex-1">
@@ -822,8 +825,8 @@ function SubscriptionCard({ customerId, canWrite }: SubscriptionCardProps): Reac
           <div className="flex gap-2"><span className="min-w-[90px] text-muted-foreground">Status</span><Badge variant={statusVariant(sub.subscription.status as CustomerStatus)}>{subStatusLabel(sub.subscription.status)}</Badge></div>
           {sub.plan ? (
             <>
-              <div className="flex gap-2"><span className="min-w-[90px] text-muted-foreground">Price</span><span>{formatMoney(sub.plan.price.amountUnits, sub.plan.price.currency)} {intervalLabel(sub.plan.interval, sub.plan.intervalCount)}</span></div>
-              <div className="flex gap-2"><span className="min-w-[90px] text-muted-foreground">Credits</span><span>{formatMoney(sub.plan.includedCredit.amountUnits, sub.plan.includedCredit.currency)}</span></div>
+              <div className="flex gap-2"><span className="min-w-[90px] text-muted-foreground">Price</span><span>{formatMicros(sub.plan.price.amountMicros, sub.plan.price.currency)} {intervalLabel(sub.plan.interval, sub.plan.intervalCount)}</span></div>
+              <div className="flex gap-2"><span className="min-w-[90px] text-muted-foreground">Credits</span><span>{formatMicros(sub.plan.includedCredit.amountMicros, sub.plan.includedCredit.currency)}</span></div>
               <div className="flex gap-2"><span className="min-w-[90px] text-muted-foreground">Tokens</span><span>{formatNumber(sub.plan.includedTokens)}</span></div>
             </>
           ) : null}
@@ -840,7 +843,7 @@ function SubscriptionCard({ customerId, canWrite }: SubscriptionCardProps): Reac
                 </SelectTrigger>
                 <SelectContent>
                   {plans.map((p) => (
-                    <SelectItem key={p._id} value={p._id}>{p.name} — {formatMoney(p.price.amountUnits, p.price.currency)} {intervalLabel(p.interval, p.intervalCount)}</SelectItem>
+                    <SelectItem key={p._id} value={p._id}>{p.name} — {formatMicros(p.price.amountMicros, p.price.currency)} {intervalLabel(p.interval, p.intervalCount)}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -920,11 +923,11 @@ function UsageCard({ customerId }: UsageCardProps): React.ReactElement {
             </div>
             <div className="flex flex-col gap-0.5 rounded-md bg-muted/50 px-3 py-2.5">
               <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Cost</span>
-              <span className="text-base font-semibold tabular-nums">{formatMoney(data.totalCostUnits, data.currency)}</span>
+              <span className="text-base font-semibold tabular-nums">{formatMicros(data.totalCostMicros, data.currency)}</span>
             </div>
             <div className="flex flex-col gap-0.5 rounded-md bg-muted/50 px-3 py-2.5">
               <span className="text-[11px] uppercase tracking-wider text-muted-foreground">Price</span>
-              <span className="text-base font-semibold tabular-nums">{formatMoney(data.totalPriceUnits, data.currency)}</span>
+              <span className="text-base font-semibold tabular-nums">{formatMicros(data.totalPriceMicros, data.currency)}</span>
             </div>
           </div>
           {data.byModel.length > 0 ? (
@@ -945,8 +948,8 @@ function UsageCard({ customerId }: UsageCardProps): React.ReactElement {
                       <TableCell className="font-mono text-xs font-medium">{m.modelAliasId}</TableCell>
                       <TableCell className="text-muted-foreground">{formatNumber(m.requests)}</TableCell>
                       <TableCell className="text-muted-foreground">{formatNumber(m.tokens)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatMoney(m.costUnits, data.currency)}</TableCell>
-                      <TableCell className="text-right tabular-nums">{formatMoney(m.priceUnits, data.currency)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatMicros(m.costMicros, data.currency)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{formatMicros(m.priceMicros, data.currency)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

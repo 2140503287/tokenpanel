@@ -131,9 +131,9 @@ export const createCustomer = (
           name: input.name,
           email: input.email ?? null,
           balance: {
-            amountUnits: 0,
+            amountMicros: 0,
             currency: orgCurrency,
-            reservedUnits: 0,
+            reservedMicros: 0,
           },
           status: "active",
           metadata: input.metadata ?? {},
@@ -243,7 +243,7 @@ export const closeCustomer = (input: {
 export const adjustCustomerBalance = (input: {
   readonly organizationId: HexId;
   readonly customerId: HexId;
-  readonly amountUnits: number;
+  readonly amountMicros: number;
   /** Ignored for write — org/customer balance currency is used. Kept for API shape. */
   readonly currency?: string | undefined;
   readonly reason?: "topup" | "adjustment" | "refund" | undefined;
@@ -277,7 +277,7 @@ export const adjustCustomerBalance = (input: {
     const result = yield* customers.adjustBalance({
       organizationId: input.organizationId,
       customerId: input.customerId,
-      amountUnits: input.amountUnits,
+      amountMicros: input.amountMicros,
       currency,
       reason: input.reason ?? "topup",
       note: input.note ?? null,

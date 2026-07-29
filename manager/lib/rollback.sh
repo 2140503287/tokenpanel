@@ -1,24 +1,8 @@
 #!/usr/bin/env bash
-# Container swap with health-check-gated auto-rollback.
+# Image rollback with health-check gating. The update flow (cmd_update) stops
+# the api, runs the destructive post migration write-quiet, then starts the new
+# container itself; rollback_to_previous is the recovery path when that fails.
 
-swap_containers() {
-  step "swap" "recreating api container..."
-
-  # --force-recreate guarantees the container is rebuilt against the newly
-  # tagged tokenpanel/app:current image. Without it, Compose may leave the
-  # existing container running because the image *tag* is unchanged (only the
-  # underlying image ID changed), making the swap a no-op.
-  docker compose -f "$APP_YML" up -d --no-deps --force-recreate api
-
-  if ! wait_for_health api 180; then
-    err "new container failed health check within 180s"
-    rollback_to_previous || err "ROLLBACK FAILED — manual intervention required"
-    return 1
-  fi
-
-  ok "api healthy on new image"
-  return 0
-}
 
 rollback_to_previous() {
   warn "AUTO-ROLLBACK: reverting to previous image..."

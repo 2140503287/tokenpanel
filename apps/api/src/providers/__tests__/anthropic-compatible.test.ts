@@ -46,7 +46,7 @@ test("stringifyContent: string passthrough; array extracts text parts", () => {
   expect(stringifyContent([{ type: "image_url", imageUrl: { url: "x" } }])).toBe("");
 });
 
-test("splitSystemAndMessages: extracts system, converts tool→user tool_result, passes others", () => {
+test("splitSystemAndMessages: extracts system, merges tool_result into prior user turn (alternating roles)", () => {
   const req: ChatRequest = {
     model: "x",
     messages: [
@@ -59,20 +59,28 @@ test("splitSystemAndMessages: extracts system, converts tool→user tool_result,
   };
   const { system, messages } = splitSystemAndMessages(req);
   expect(system).toBe("sys1\n\nsys2");
-  expect(messages).toHaveLength(3);
+  // tool result merges into the preceding user turn (Anthropic requires
+  // strict user/assistant alternation).
+  expect(messages).toHaveLength(2);
   expect(messages[0]?.role).toBe("user");
-  expect(messages[1]?.role).toBe("user");
-  expect((messages[1]?.content as unknown[])[0]).toMatchObject({ type: "tool_result", tool_use_id: "t1" });
-  expect(messages[2]?.role).toBe("assistant");
+  expect((messages[0]?.content as unknown[])[1]).toMatchObject({
+    type: "tool_result",
+    tool_use_id: "t1",
+    content: "result",
+  });
+  expect(messages[1]?.role).toBe("assistant");
 });
 
-test("translateTools: returns undefined for empty/missing; passes function tools, wraps others", () => {
+test("translateTools: undefined for empty; OpenAI function tools → input_schema; native tools pass through", () => {
   expect(translateTools(undefined)).toBeUndefined();
   expect(translateTools([])).toBeUndefined();
-  const out = translateTools([{ type: "function", function: { name: "f" } }, { type: "other" }]);
+  const out = translateTools([
+    { type: "function", function: { name: "f", parameters: { type: "object" } } },
+    { name: "native", input_schema: { type: "object" } },
+  ]);
   expect(out).toHaveLength(2);
-  expect(out?.[0]).toMatchObject({ type: "function" });
-  expect(out?.[1]).toMatchObject({ name: "tool" });
+  expect(out?.[0]).toEqual({ name: "f", input_schema: { type: "object" } });
+  expect(out?.[1]).toEqual({ name: "native", input_schema: { type: "object" } });
 });
 
 test("buildBody: default max_tokens 4096, includes system, maps stop→stop_sequences, thinking budget per effort", () => {
@@ -168,14 +176,16 @@ test("assembleMessage: text blocks concatenated into content", () => {
   expect(m.content).toBe("ab");
 });
 
-test("assembleMessage: tool_use blocks → toolCalls with JSON-stringified input", () => {
+test("assembleMessage: tool_use blocks → toolCalls; tool-only turn gets null content", () => {
   const m = assembleMessage({ content: [{ type: "tool_use", id: "t1", name: "fn", input: { x: 1 } }] });
   expect(m.toolCalls).toEqual([{ id: "t1", type: "function", function: { name: "fn", arguments: '{"x":1}' } }]);
+  expect(m.content).toBeNull();
 });
 
-test("assembleMessage: thinking blocks appended to text", () => {
+test("assembleMessage: thinking blocks → reasoning, not visible text", () => {
   const m = assembleMessage({ content: [{ type: "thinking", thinking: "reasoning" }, { type: "text", text: "answer" }] });
-  expect(m.content).toBe("reasoninganswer");
+  expect(m.content).toBe("answer");
+  expect(m.reasoning).toBe("reasoning");
 });
 
 test("assembleMessage: empty/invalid → empty assistant", () => {

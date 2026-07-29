@@ -7,6 +7,7 @@ import { ParseResult, Schema } from "effect";
 import {
   CurrencyCode,
   MoneyUnits,
+  MoneyMicros,
   Money,
   TokenCount,
   SafeInt,
@@ -36,6 +37,7 @@ import {
 export {
   CurrencyCode,
   MoneyUnits,
+  MoneyMicros,
   Money,
   TokenCount,
   SafeInt,
@@ -127,16 +129,25 @@ export const TimestampFields = {
 // ---------------------------------------------------------------------------
 
 export const CustomerBalance = Schema.Struct({
-  amountUnits: MoneyUnits,
-  reservedUnits: Schema.optionalWith(MoneyUnits, { default: () => 0 }),
+  amountMicros: MoneyMicros,
+  reservedMicros: Schema.optionalWith(MoneyMicros, { default: () => 0 }),
+  amountUnits: exactOptional(MoneyUnits),
+  reservedUnits: exactOptional(MoneyUnits),
   currency: CurrencyCode,
 });
 
 export type CustomerBalance = Schema.Schema.Type<typeof CustomerBalance>;
 
 export const TokenPriceSchedule = Schema.Struct({
-  inputUnitsPerMillion: MoneyUnits,
-  outputUnitsPerMillion: MoneyUnits,
+  inputMicrosPerMillion: MoneyMicros,
+  outputMicrosPerMillion: MoneyMicros,
+  reasoningMicrosPerMillion: exactOptional(MoneyMicros),
+  cacheReadMicrosPerMillion: exactOptional(MoneyMicros),
+  cacheWriteMicrosPerMillion: exactOptional(MoneyMicros),
+  inputAudioMicrosPerMillion: exactOptional(MoneyMicros),
+  outputAudioMicrosPerMillion: exactOptional(MoneyMicros),
+  inputUnitsPerMillion: exactOptional(MoneyUnits),
+  outputUnitsPerMillion: exactOptional(MoneyUnits),
   reasoningUnitsPerMillion: exactOptional(MoneyUnits),
   cacheReadUnitsPerMillion: exactOptional(MoneyUnits),
   cacheWriteUnitsPerMillion: exactOptional(MoneyUnits),

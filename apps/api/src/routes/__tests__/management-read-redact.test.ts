@@ -14,7 +14,7 @@ function customer(over: Partial<CustomerDoc> = {}): CustomerDoc {
     externalId: null,
     name: "alice",
     email: "alice@example.com",
-    balance: { amountUnits: 10000, reservedUnits: 0, currency: "USD" },
+    balance: { amountMicros: 10000, reservedMicros: 0, currency: "USD" },
     status: "active",
     metadata: {},
     createdAt: new Date(),
@@ -25,7 +25,7 @@ function customer(over: Partial<CustomerDoc> = {}): CustomerDoc {
 
 test("redactCustomer: strips balance and preserves other fields", () => {
   const c = customer({
-    balance: { amountUnits: 5000, reservedUnits: 0, currency: "USD" },
+    balance: { amountMicros: 5000, reservedMicros: 0, currency: "USD" },
   });
   const out = redactCustomer(c);
   expect("balance" in out).toBe(false);
@@ -88,7 +88,7 @@ function modelDoc(over: Partial<ModelDoc> = {}): ModelDoc {
     limits: { context: 128000 },
     modalities: { input: ["text"], output: ["text"] },
     status: undefined,
-    price: { inputUnitsPerMillion: 300, outputUnitsPerMillion: 600 },
+    price: { inputMicrosPerMillion: 300, outputMicrosPerMillion: 600 },
     marginBps: 0,
     currency: "USD",
     active: true,
@@ -116,7 +116,7 @@ test("toModelCapability: omits entries, marginBps, ids, timestamps", () => {
   expect("createdAt" in out).toBe(false);
   expect("updatedAt" in out).toBe(false);
   expect(out.price).toEqual({
-    inputUnitsPerMillion: 300,
-    outputUnitsPerMillion: 600,
+    inputMicrosPerMillion: 300,
+    outputMicrosPerMillion: 600,
   });
 });

@@ -9,12 +9,16 @@ export type AnalyticsSummary = {
   totals: {
     requests: number;
     tokens: number;
+    promptTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+    reasoningTokens: number;
     byCurrency: Array<{
       currency: string;
       requests: number;
       tokens: number;
-      costUnits: number;
-      priceUnits: number;
+      costMicros: number;
+      priceMicros: number;
     }>;
   };
   topCustomers: Array<{
@@ -23,8 +27,12 @@ export type AnalyticsSummary = {
     currency: string;
     requests: number;
     tokens: number;
-    costUnits: number;
-    priceUnits: number;
+    cacheReadTokens: number;
+    promptTokens: number;
+    cacheWriteTokens: number;
+    reasoningTokens: number;
+    costMicros: number;
+    priceMicros: number;
   }>;
 };
 

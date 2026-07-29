@@ -62,8 +62,8 @@ function makeCustomer(
     name: over.name ?? "Alice",
     email: over.email,
     balance: {
-      amountUnits: over.balance?.amountUnits ?? 10_000,
-      reservedUnits: over.balance?.reservedUnits ?? 0,
+      amountMicros: over.balance?.amountMicros ?? 10_000,
+      reservedMicros: over.balance?.reservedMicros ?? 0,
       currency: over.balance?.currency ?? "USD",
     },
     status: over.status ?? "active",
@@ -136,7 +136,7 @@ describe("tp_mgmt_ auth through /v1 chat context", () => {
     expect(actor.actorKind).toBe("management_key");
     expect(actor.customerId).toBeNull();
     expect(actor.managementKeyId).toEqual(principal.managementKey._id);
-    // Route stamps priceUnits 0 for management_internal — no balance debit.
+    // Route stamps priceMicros 0 for management_internal — no balance debit.
   });
 
   test("mgmt key + unknown customerEmail → 404 customer_not_found", async () => {
@@ -163,7 +163,7 @@ describe("tp_mgmt_ auth through /v1 chat context", () => {
     const customer = makeCustomer({
       organizationId: orgId,
       email: "alice@example.com",
-      balance: { amountUnits: 5_000, reservedUnits: 0, currency: "USD" },
+      balance: { amountMicros: 5_000, reservedMicros: 0, currency: "USD" },
     });
     const db = makeDb([customer]);
 
@@ -251,7 +251,7 @@ describe("tp_mgmt_ auth through /v1 chat context", () => {
       customer,
       customerEmail: "bill@example.com",
     };
-    // Matches openai.ts: priceUnits = ctx.kind === "management_internal" ? 0 : charges
+    // Matches openai.ts: priceMicros = ctx.kind === "management_internal" ? 0 : charges
     expect(billableCustomerId(internal)).toBeNull();
     expect(billableCustomerId(attributed)?.equals(customer._id)).toBe(true);
   });

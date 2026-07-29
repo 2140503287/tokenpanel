@@ -156,7 +156,14 @@ test.describe("catalog: providers + models", () => {
     await reliableClick(page.getByRole("button", { name: "Add metadata row" }));
     await page.getByLabel("Metadata name 1").fill(META_KEY);
     await page.getByLabel("Metadata value 1").fill(META_VALUE);
+    // Wait for the PATCH to commit before navigating away — otherwise the
+    // in-flight request is cancelled and the metadata never persists.
+    const saveDone = page.waitForResponse(
+      (r) => r.request().method() === "PATCH" && r.url().includes("/admin/models/"),
+    );
     await reliableClick(page.getByRole("button", { name: "Save", exact: true }));
+    const resp = await saveDone;
+    expect(resp.status(), "PATCH /admin/models/:id succeeds").toBe(200);
 
     // Re-open the edit view and confirm the stored metadata row rehydrated.
     await page.goto("/models");

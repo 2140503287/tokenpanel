@@ -17,7 +17,7 @@ export type DashboardSummary = {
     /** Redacted when caller lacks customers:read. */
     email?: string | null;
     /** Redacted when caller lacks balances:read. */
-    balance?: { amountUnits: number; currency: string; reservedUnits?: number };
+    balance?: { amountMicros: number; currency: string; reservedMicros?: number };
     status: string;
     /** Redacted when caller lacks customers:read. */
     createdAt?: string;

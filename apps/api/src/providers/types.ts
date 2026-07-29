@@ -7,18 +7,58 @@
 import type { Effect } from "effect";
 import type { ProviderError } from "./provider-errors.ts";
 
-export type ContentPart = {
-  type: "text" | "image_url" | "input_audio";
-  text?: string | undefined;
-  imageUrl?: { url: string } | undefined;
-  inputData?: string | undefined;
-};
+/**
+ * Protocol-neutral content part. Field names are internal (camelCase);
+ * adapters serialize to each protocol's wire shape (OpenAI snake_case
+ * `image_url`/`input_audio`/`file`, Anthropic `image`/`document`/`tool_use`
+ * blocks). Never JSON.stringify a ContentPart directly to a provider.
+ */
+export type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; imageUrl: { url: string; detail?: string | undefined } }
+  | {
+      type: "input_audio";
+      inputData: { data: string; format: "wav" | "mp3" };
+    }
+  | {
+      type: "file";
+      file: {
+        fileId?: string | undefined;
+        fileData?: string | undefined;
+        filename?: string | undefined;
+      };
+    }
+  /** Anthropic assistant tool-call block (request replay). */
+  | { type: "tool_use"; id: string; name: string; input: unknown }
+  /** Anthropic user tool-result block (request replay). */
+  | {
+      type: "tool_result";
+      toolUseId: string;
+      content?: unknown;
+      isError?: boolean | undefined;
+    }
+  /**
+   * Protocol-native block kept verbatim for replay (Anthropic `thinking`
+   * with signature, `document`, server-tool results, …). The owning
+   * protocol's adapter passes it through; foreign adapters degrade to text.
+   */
+  | { type: "raw"; block: Record<string, unknown> };
 
 export type ChatMessage = {
-  role: "system" | "user" | "assistant" | "tool";
-  content: string | ContentPart[];
+  role: "system" | "developer" | "user" | "assistant" | "tool";
+  /**
+   * `null` is the canonical OpenAI assistant shape when the message carries
+   * only tool_calls (spec: `string | array | null`). Adapters must preserve
+   * null on the wire, not coerce to "".
+   */
+  content: string | ContentPart[] | null;
+  name?: string | undefined;
   toolCallId?: string | undefined;
   toolCalls?: unknown[] | undefined;
+  /** OpenAI assistant refusal (spec: `string | null`). */
+  refusal?: string | null | undefined;
+  /** OpenAI audio-response reference for multi-turn audio. */
+  audio?: { id: string } | undefined;
   reasoning?: string | undefined;
 };
 
@@ -54,15 +94,22 @@ export type DiscoveredModel = {
 export type ChatRequest = {
   model: string;
   messages: ChatMessage[];
+  /**
+   * Top-level system prompt (Anthropic `system` param). `text` feeds
+   * estimation + OpenAI-shaped upstreams (developer message); `blocks`
+   * carries the original structured array — including `cache_control`
+   * breakpoints — to Anthropic upstreams verbatim.
+   */
+  system?: { text: string; blocks?: unknown[] | undefined } | undefined;
   stream?: boolean | undefined;
   temperature?: number | undefined;
   maxTokens?: number | undefined;
+  reasoning?: { effort?: string | undefined } | boolean | undefined;
   topP?: number | undefined;
   tools?: unknown[] | undefined;
   toolChoice?: unknown | undefined;
   stop?: string[] | undefined;
   responseFormat?: unknown | undefined;
-  reasoning?: { effort?: "low" | "medium" | "high" | undefined } | boolean | undefined;
   signal?: AbortSignal | undefined;
   extra?: Record<string, unknown> | undefined;
 };
@@ -95,6 +142,7 @@ export type StreamChunk = {
   type: "delta" | "done" | "error";
   delta?:
     | {
+        role?: string | undefined;
         content?: string | undefined;
         toolCalls?: unknown[] | undefined;
         reasoning?: string | undefined;

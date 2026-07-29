@@ -103,15 +103,15 @@ export type CustomersRepoService = {
     MongoFailure | PersistenceDataError
   >;
 
-  /** Atomic hold: available >= need → $inc reservedUnits. */
+  /** Atomic hold: available >= need → $inc reservedMicros. */
   readonly reserveBalance: (params: {
     readonly customerId: ObjectId;
     readonly organizationId: ObjectId;
-    readonly needUnits: number;
+    readonly needMicros: number;
     readonly currency: string;
     readonly session?: ClientSession;
   }) => Effect.Effect<
-    { reserved: true; reservedUnits: number } | { reserved: false; reason: string },
+    { reserved: true; reservedMicros: number } | { reserved: false; reason: string },
     MongoFailure
   >;
 
@@ -119,7 +119,7 @@ export type CustomersRepoService = {
   readonly releaseReserved: (params: {
     readonly customerId: ObjectId;
     readonly organizationId: ObjectId;
-    readonly reservedUnits: number;
+    readonly reservedMicros: number;
     readonly session?: ClientSession;
   }) => Effect.Effect<boolean, MongoFailure>;
 
@@ -127,17 +127,17 @@ export type CustomersRepoService = {
   readonly settleWithReservation: (params: {
     readonly customerId: ObjectId;
     readonly organizationId: ObjectId;
-    readonly priceUnits: number;
-    readonly reservedUnits: number;
+    readonly priceMicros: number;
+    readonly reservedMicros: number;
     readonly currency: string;
     readonly session?: ClientSession;
   }) => Effect.Effect<boolean, MongoFailure>;
 
-  /** Bare debit when no reservation hold exists: amountUnits $gte price → $inc. */
+  /** Bare debit when no reservation hold exists: amountMicros $gte price → $inc. */
   readonly debitBalance: (params: {
     readonly customerId: ObjectId;
     readonly organizationId: ObjectId;
-    readonly priceUnits: number;
+    readonly priceMicros: number;
     readonly currency: string;
     readonly session?: ClientSession;
   }) => Effect.Effect<boolean, MongoFailure>;
@@ -321,8 +321,8 @@ export const CustomersRepoLive: Layer.Layer<CustomersRepo, never, MongoDb> =
 
         reserveBalance: (params) =>
           Effect.gen(function* () {
-            if (params.needUnits <= 0) {
-              return { reserved: true as const, reservedUnits: 0 };
+            if (params.needMicros <= 0) {
+              return { reserved: true as const, reservedMicros: 0 };
             }
             const now = new Date();
             const result = yield* tryMongo(() =>
@@ -332,10 +332,10 @@ export const CustomersRepoLive: Layer.Layer<CustomersRepo, never, MongoDb> =
                   organizationId: params.organizationId,
                   "balance.currency": params.currency,
                   status: { $ne: "closed" },
-                  $expr: availableGteExpr(params.needUnits),
+                  $expr: availableGteExpr(params.needMicros),
                 },
                 balanceDualIncPipeline({
-                  reservedDelta: params.needUnits,
+                  reservedDelta: params.needMicros,
                   set: { updatedAt: now },
                 }),
                 params.session ? { session: params.session } : {},
@@ -349,23 +349,23 @@ export const CustomersRepoLive: Layer.Layer<CustomersRepo, never, MongoDb> =
             }
             return {
               reserved: true as const,
-              reservedUnits: params.needUnits,
+              reservedMicros: params.needMicros,
             };
           }),
 
         releaseReserved: (params) =>
           Effect.gen(function* () {
-            if (params.reservedUnits <= 0) return true;
+            if (params.reservedMicros <= 0) return true;
             const now = new Date();
             const result = yield* tryMongo(() =>
               customers().updateOne(
                 {
                   _id: params.customerId,
                   organizationId: params.organizationId,
-                  $expr: reservedGteExpr(params.reservedUnits),
+                  $expr: reservedGteExpr(params.reservedMicros),
                 },
                 balanceDualIncPipeline({
-                  reservedDelta: -params.reservedUnits,
+                  reservedDelta: -params.reservedMicros,
                   set: { updatedAt: now },
                 }),
                 params.session ? { session: params.session } : {},
@@ -377,8 +377,8 @@ export const CustomersRepoLive: Layer.Layer<CustomersRepo, never, MongoDb> =
         settleWithReservation: (params) =>
           Effect.gen(function* () {
             const now = new Date();
-            const reserved = Math.max(0, params.reservedUnits);
-            const price = Math.max(0, params.priceUnits);
+            const reserved = Math.max(0, params.reservedMicros);
+            const price = Math.max(0, params.priceMicros);
             if (price === 0 && reserved === 0) return true;
 
             const filter: Record<string, unknown> = {
@@ -412,7 +412,7 @@ export const CustomersRepoLive: Layer.Layer<CustomersRepo, never, MongoDb> =
 
         debitBalance: (params) =>
           Effect.gen(function* () {
-            if (params.priceUnits <= 0) return true;
+            if (params.priceMicros <= 0) return true;
             const now = new Date();
             const result = yield* tryMongo(() =>
               customers().updateOne(
@@ -421,10 +421,10 @@ export const CustomersRepoLive: Layer.Layer<CustomersRepo, never, MongoDb> =
                   organizationId: params.organizationId,
                   "balance.currency": params.currency,
                   status: { $ne: "closed" },
-                  $expr: amountGteExpr(params.priceUnits),
+                  $expr: amountGteExpr(params.priceMicros),
                 },
                 balanceDualIncPipeline({
-                  amountDelta: -params.priceUnits,
+                  amountDelta: -params.priceMicros,
                   set: { updatedAt: now },
                 }),
                 params.session ? { session: params.session } : {},

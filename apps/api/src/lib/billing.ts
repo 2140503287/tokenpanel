@@ -81,8 +81,8 @@ export function estimatePromptTokens(messages: ChatMessage[]): number {
 }
 
 export function worstCaseActiveEntryPrice(model: ModelDoc): {
-  inputUnitsPerMillion: number;
-  outputUnitsPerMillion: number;
+  inputMicrosPerMillion: number;
+  outputMicrosPerMillion: number;
 } {
   return worstCaseActiveEntryPriceDomain(model);
 }
@@ -120,6 +120,6 @@ export function computeCharges(params: {
   model: ModelDoc;
   usage: ChatResponse["usage"];
   cacheAccounting?: CacheAccountingMode | undefined;
-}): { costUnits: number; priceUnits: number; currency: string } {
+}): { costMicros: number; priceMicros: number; currency: string } {
   return computeChargesDomain(params);
 }

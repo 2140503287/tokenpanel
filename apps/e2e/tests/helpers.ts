@@ -143,8 +143,10 @@ export async function createModel(page: Page, opts: CreateModelOpts): Promise<vo
   await page.locator("#m-alias").fill(opts.alias);
   await page.locator("#m-name").fill(opts.name);
   await page.locator("#m-ctx").fill("8192");
-  await page.locator("#m-ipm").fill(opts.inputPrice ?? "1000");
-  await page.locator("#m-opm").fill(opts.outputPrice ?? "2000");
+  // Prices are decimal major units per million tokens (the admin form's input
+  // convention post-micros-migration): "10" = $10/M, "20" = $20/M.
+  await page.locator("#m-ipm").fill(opts.inputPrice ?? "10");
+  await page.locator("#m-opm").fill(opts.outputPrice ?? "20");
   await page.locator("#m-cur").fill(opts.currency ?? "USD");
   await page.locator("#m-margin").fill("0");
   await selectOption(page, page.locator("#m-prov"), opts.providerName);
@@ -305,8 +307,8 @@ export async function setupMockPipeline(page: Page, suffix = ""): Promise<MockPi
     providerName,
     upstream: "mock-gpt",
     currency: "USD",
-    inputPrice: "1000",
-    outputPrice: "2000",
+    inputPrice: "10",
+    outputPrice: "20",
   });
   await createCustomer(page, { name: customerName, email: customerEmail });
   await addCustomerCredit(page, { amount: "1000000", currency: "USD" });

@@ -1,21 +1,21 @@
 import { test, expect, describe } from "bun:test";
 import {
-  availableUnits,
+  availableMicros,
   wouldReserveSucceed,
 } from "../reservation.ts";
 
-describe("availableUnits / wouldReserveSucceed", () => {
+describe("availableMicros / wouldReserveSucceed", () => {
   test("available = amount - reserved", () => {
-    expect(availableUnits({ amountUnits: 1000, reservedUnits: 200 })).toBe(800);
-    expect(availableUnits({ amountUnits: 100, reservedUnits: 0 })).toBe(100);
-    expect(availableUnits({ amountUnits: 50 })).toBe(50);
+    expect(availableMicros({ amountMicros: 1000, reservedMicros: 200 })).toBe(800);
+    expect(availableMicros({ amountMicros: 100, reservedMicros: 0 })).toBe(100);
+    expect(availableMicros({ amountMicros: 50 })).toBe(50);
     // Never negative available.
-    expect(availableUnits({ amountUnits: 10, reservedUnits: 50 })).toBe(0);
+    expect(availableMicros({ amountMicros: 10, reservedMicros: 50 })).toBe(0);
   });
 
   test("wouldReserveSucceed: currency mismatch", () => {
     const r = wouldReserveSucceed(
-      { amountUnits: 1000, reservedUnits: 0, currency: "USD" },
+      { amountMicros: 1000, reservedMicros: 0, currency: "USD" },
       100,
       "EUR",
     );
@@ -25,7 +25,7 @@ describe("availableUnits / wouldReserveSucceed", () => {
 
   test("wouldReserveSucceed: insufficient available (held reduces capacity)", () => {
     const r = wouldReserveSucceed(
-      { amountUnits: 1000, reservedUnits: 900, currency: "USD" },
+      { amountMicros: 1000, reservedMicros: 900, currency: "USD" },
       200,
       "USD",
     );
@@ -35,15 +35,15 @@ describe("availableUnits / wouldReserveSucceed", () => {
 
   test("wouldReserveSucceed: amount would pass but available fails", () => {
     // amount 1000 >= need 100 but reserved 950 → available 50.
-    const snap = { amountUnits: 1000, reservedUnits: 950, currency: "USD" };
-    expect(snap.amountUnits >= 100).toBe(true);
+    const snap = { amountMicros: 1000, reservedMicros: 950, currency: "USD" };
+    expect(snap.amountMicros >= 100).toBe(true);
     expect(wouldReserveSucceed(snap, 100, "USD").ok).toBe(false);
   });
 
   test("wouldReserveSucceed: zero need always ok", () => {
     expect(
       wouldReserveSucceed(
-        { amountUnits: 0, reservedUnits: 0, currency: "USD" },
+        { amountMicros: 0, reservedMicros: 0, currency: "USD" },
         0,
         "USD",
       ).ok,
@@ -53,7 +53,7 @@ describe("availableUnits / wouldReserveSucceed", () => {
   test("wouldReserveSucceed: sufficient available", () => {
     expect(
       wouldReserveSucceed(
-        { amountUnits: 1000, reservedUnits: 100, currency: "USD" },
+        { amountMicros: 1000, reservedMicros: 100, currency: "USD" },
         500,
         "USD",
       ).ok,

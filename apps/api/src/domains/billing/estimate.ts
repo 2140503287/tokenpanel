@@ -17,8 +17,11 @@ import {
  * Text → ~chars/token; each non-text part → fixed overhead.
  * Over-estimate is safe for pre-flight.
  */
-export function estimatePromptTokens(messages: readonly ChatMessage[]): number {
-  let chars = 0;
+export function estimatePromptTokens(
+  messages: readonly ChatMessage[],
+  systemText?: string | undefined,
+): number {
+  let chars = systemText?.length ?? 0;
   let nonTextParts = 0;
   for (const m of messages) {
     if (typeof m.content === "string") {
@@ -46,18 +49,18 @@ export function estimatePromptTokens(messages: readonly ChatMessage[]): number {
  * the most expensive active entry.
  */
 export function worstCaseActiveEntryPrice(model: ModelDoc): {
-  inputUnitsPerMillion: number;
-  outputUnitsPerMillion: number;
+  inputMicrosPerMillion: number;
+  outputMicrosPerMillion: number;
 } {
   const active = model.entries.filter((e) => e.active);
-  let maxIn = model.price.inputUnitsPerMillion;
-  let maxOut = model.price.outputUnitsPerMillion;
+  let maxIn = model.price.inputMicrosPerMillion;
+  let maxOut = model.price.outputMicrosPerMillion;
   for (const e of active) {
     const s = e.price ?? model.price;
-    if (s.inputUnitsPerMillion > maxIn) maxIn = s.inputUnitsPerMillion;
-    if (s.outputUnitsPerMillion > maxOut) maxOut = s.outputUnitsPerMillion;
+    if (s.inputMicrosPerMillion > maxIn) maxIn = s.inputMicrosPerMillion;
+    if (s.outputMicrosPerMillion > maxOut) maxOut = s.outputMicrosPerMillion;
   }
-  return { inputUnitsPerMillion: maxIn, outputUnitsPerMillion: maxOut };
+  return { inputMicrosPerMillion: maxIn, outputMicrosPerMillion: maxOut };
 }
 
 /**
@@ -73,7 +76,7 @@ export function resolveCompletionCap(
   return Math.max(0, model.limits.output ?? DEFAULT_COMPLETION_CAP);
 }
 
-/** Conservative pre-flight spend estimate in units. */
+/** Conservative pre-flight spend estimate in micros. */
 export function estimatePreFlightSpend(params: {
   readonly model: ModelDoc;
   readonly estimatedPromptTokens: number;
@@ -82,26 +85,26 @@ export function estimatePreFlightSpend(params: {
   readonly promptTokens: number;
   readonly completionTokens: number;
   readonly estimatedTokens: number;
-  readonly estimatedSpendUnits: number;
+  readonly estimatedSpendMicros: number;
   readonly currency: string;
   readonly price: {
-    readonly inputUnitsPerMillion: number;
-    readonly outputUnitsPerMillion: number;
+    readonly inputMicrosPerMillion: number;
+    readonly outputMicrosPerMillion: number;
   };
 } {
   const prompt = Math.max(0, params.estimatedPromptTokens);
   const completion = resolveCompletionCap(params.maxCompletionTokens, params.model);
   const price = worstCaseActiveEntryPrice(params.model);
-  const estimatedSpendUnits =
-    Math.ceil((prompt * price.inputUnitsPerMillion) / TOKENS_PER_MILLION_COUNT) +
+  const estimatedSpendMicros =
+    Math.ceil((prompt * price.inputMicrosPerMillion) / TOKENS_PER_MILLION_COUNT) +
     Math.ceil(
-      (completion * price.outputUnitsPerMillion) / TOKENS_PER_MILLION_COUNT,
+      (completion * price.outputMicrosPerMillion) / TOKENS_PER_MILLION_COUNT,
     );
   return {
     promptTokens: prompt,
     completionTokens: completion,
     estimatedTokens: prompt + completion,
-    estimatedSpendUnits,
+    estimatedSpendMicros,
     currency: params.model.currency,
     price,
   };
