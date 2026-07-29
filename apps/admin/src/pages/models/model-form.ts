@@ -497,7 +497,7 @@ export function buildModelPayload(
     return { ok: false, error: "Price must be non-negative decimals (≤6 dp)." };
   }
 
-  const marginBps = toNonNegInt(f.marginBps);
+  const marginBps = f.marginBps.trim() === "" ? 0 : toNonNegInt(f.marginBps);
   if (marginBps === undefined)
     return { ok: false, error: "Margin (bps) must be a non-negative integer." };
 

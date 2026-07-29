@@ -15,6 +15,8 @@ interface FieldProps {
   error?: string | undefined;
   /** Extra classes for the outer wrapper. */
   className?: string | undefined;
+  /** Renders a muted "(optional)" marker next to the label. */
+  optional?: boolean | undefined;
   children: React.ReactNode;
 }
 
@@ -31,12 +33,16 @@ function Field({
   tooltip,
   error,
   className,
+  optional,
   children,
 }: FieldProps): React.ReactElement {
   return (
     <div className={cn("flex flex-col gap-1.5", className)}>
       <div className="flex min-h-[1.25rem] items-end gap-1">
-        <Label htmlFor={id}>{label}</Label>
+        <Label htmlFor={id}>
+          {label}
+          {optional ? <span className="ml-1 font-normal text-muted-foreground/70">(optional)</span> : null}
+        </Label>
         {tooltip ? (
           <Tooltip>
             <TooltipTrigger asChild>

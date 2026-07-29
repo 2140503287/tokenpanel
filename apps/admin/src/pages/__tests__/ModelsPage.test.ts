@@ -167,8 +167,11 @@ test("buildModelPayload: optional rate not non-neg decimal → error", () => {
   expect(buildModelPayload(validForm({ reasoningUnits: "abc" }), true).ok).toBe(false);
 });
 
-test("buildModelPayload: margin not non-neg int → error", () => {
+test("buildModelPayload: margin not non-neg int → error; blank → 0", () => {
   expect(buildModelPayload(validForm({ marginBps: "-1" }), true).ok).toBe(false);
+  const blank = buildModelPayload(validForm({ marginBps: "" }), true);
+  expect(blank.ok).toBe(true);
+  if (blank.ok) expect(blank.payload.marginBps).toBe(0);
 });
 
 test("buildModelPayload: currency not 3-letter → error", () => {
