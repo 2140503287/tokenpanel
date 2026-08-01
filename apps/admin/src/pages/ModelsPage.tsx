@@ -33,7 +33,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Boxes, Plus, ArrowLeft, Trash2, GripVertical, Sparkles, ShieldCheck } from "lucide-react";
+import { Boxes, Plus, ArrowLeft, Trash2, GripVertical, Sparkles, ShieldCheck, Pencil } from "lucide-react";
 import { PageHeader } from "@/components/PageHeader";
 import { EmptyState } from "@/components/EmptyState";
 import { FadeIn } from "@/components/anim";
@@ -964,6 +964,7 @@ function FallbackChain({
   const [chainError, setChainError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
 
   const entries = model.entries;
 
@@ -1225,6 +1226,17 @@ function FallbackChain({
                             <Button
                               variant="ghost"
                               size="icon-sm"
+                              onClick={() => setEditingEntryId(editingEntryId === entry.id ? null : entry.id)}
+                              disabled={reordering}
+                              aria-label="Edit"
+                            >
+                              <Pencil className="size-4" />
+                            </Button>
+                          ) : null}
+                          {canWrite ? (
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
                               className="text-destructive hover:text-destructive"
                               onClick={() => void onRemoveEntry(entry)}
                               disabled={reordering}
@@ -1240,6 +1252,18 @@ function FallbackChain({
                         <span>cost: {entry.cost ? `${formatMicrosToMajor(entry.cost.inputMicrosPerMillion)}/${formatMicrosToMajor(entry.cost.outputMicrosPerMillion)}` : "default"}</span>
                         <span>price: {entry.price ? `${formatMicrosToMajor(entry.price.inputMicrosPerMillion)}/${formatMicrosToMajor(entry.price.outputMicrosPerMillion)}` : "default"}</span>
                       </div>
+                      {editingEntryId === entry.id ? (
+                        <EditEntryForm
+                          modelId={model._id}
+                          entry={entry}
+                          allEntries={entries}
+                          onSaved={() => {
+                            setEditingEntryId(null);
+                            onModelReplaced();
+                          }}
+                          onCancel={() => setEditingEntryId(null)}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 </div>
@@ -1629,6 +1653,213 @@ function AddEntryForm({ modelId, providers, onAdded }: AddEntryFormProps): React
 
       <div className="flex justify-end">
         <Button type="submit" disabled={submitting}>{submitting ? "Adding…" : "Add entry"}</Button>
+      </div>
+    </form>
+  );
+}
+
+interface EditEntryFormProps {
+  modelId: string;
+  entry: ModelEntry;
+  allEntries: ModelEntry[];
+  onSaved: () => void;
+  onCancel: () => void;
+}
+
+function microsToInput(micros: number | undefined): string {
+  return micros !== undefined ? formatMicrosToMajor(micros) : "";
+}
+
+function EditEntryForm({ modelId, entry, allEntries, onSaved, onCancel }: EditEntryFormProps): React.ReactElement {
+  const [upstreamModelId, setUpstreamModelId] = useState(entry.upstreamModelId);
+  const [costInput, setCostInput] = useState(microsToInput(entry.cost?.inputMicrosPerMillion));
+  const [costOutput, setCostOutput] = useState(microsToInput(entry.cost?.outputMicrosPerMillion));
+  const [costCacheRead, setCostCacheRead] = useState(microsToInput(entry.cost?.cacheReadMicrosPerMillion));
+  const [costCacheWrite, setCostCacheWrite] = useState(microsToInput(entry.cost?.cacheWriteMicrosPerMillion));
+  const [costReasoning, setCostReasoning] = useState(microsToInput(entry.cost?.reasoningMicrosPerMillion));
+  const [costInputAudio, setCostInputAudio] = useState(microsToInput(entry.cost?.inputAudioMicrosPerMillion));
+  const [costOutputAudio, setCostOutputAudio] = useState(microsToInput(entry.cost?.outputAudioMicrosPerMillion));
+  const [priceInput, setPriceInput] = useState(microsToInput(entry.price?.inputMicrosPerMillion));
+  const [priceOutput, setPriceOutput] = useState(microsToInput(entry.price?.outputMicrosPerMillion));
+  const [priceCacheRead, setPriceCacheRead] = useState(microsToInput(entry.price?.cacheReadMicrosPerMillion));
+  const [priceCacheWrite, setPriceCacheWrite] = useState(microsToInput(entry.price?.cacheWriteMicrosPerMillion));
+  const [priceReasoning, setPriceReasoning] = useState(microsToInput(entry.price?.reasoningMicrosPerMillion));
+  const [priceInputAudio, setPriceInputAudio] = useState(microsToInput(entry.price?.inputAudioMicrosPerMillion));
+  const [priceOutputAudio, setPriceOutputAudio] = useState(microsToInput(entry.price?.outputAudioMicrosPerMillion));
+  const [active, setActive] = useState(entry.active);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const submit = useCallback(
+    async (e: FormEvent<HTMLFormElement>) => {
+      e.preventDefault();
+      const trimmedUpstream = upstreamModelId.trim();
+      if (!trimmedUpstream) {
+        setError("Upstream model id is required.");
+        return;
+      }
+
+      const updatedEntry: Record<string, unknown> = {
+        id: entry.id,
+        providerId: entry.providerId,
+        upstreamModelId: trimmedUpstream,
+        priority: entry.priority,
+        active,
+      };
+
+      // Build cost override
+      if (costInput !== "" || costOutput !== "") {
+        try {
+          const cIn = parseMajorToMicros(costInput === "" ? "0" : costInput);
+          const cOut = parseMajorToMicros(costOutput === "" ? "0" : costOutput);
+          const cost: Record<string, number> = {
+            inputMicrosPerMillion: cIn,
+            outputMicrosPerMillion: cOut,
+          };
+          const optCost: Array<[string, string]> = [
+            ["cacheReadMicrosPerMillion", costCacheRead],
+            ["cacheWriteMicrosPerMillion", costCacheWrite],
+            ["reasoningMicrosPerMillion", costReasoning],
+            ["inputAudioMicrosPerMillion", costInputAudio],
+            ["outputAudioMicrosPerMillion", costOutputAudio],
+          ];
+          for (const [key, raw] of optCost) {
+            if (raw.trim() === "") continue;
+            cost[key] = parseMajorToMicros(raw);
+          }
+          updatedEntry.cost = cost;
+        } catch {
+          setError("Cost values must be non-negative decimals (≤6 dp).");
+          return;
+        }
+      } else if (
+        costCacheRead !== "" ||
+        costCacheWrite !== "" ||
+        costReasoning !== "" ||
+        costInputAudio !== "" ||
+        costOutputAudio !== ""
+      ) {
+        setError("Set cost input/output before adding optional cost rates.");
+        return;
+      }
+
+      // Build price override
+      if (priceInput !== "" || priceOutput !== "") {
+        try {
+          const pIn = parseMajorToMicros(priceInput === "" ? "0" : priceInput);
+          const pOut = parseMajorToMicros(priceOutput === "" ? "0" : priceOutput);
+          const price: Record<string, number> = {
+            inputMicrosPerMillion: pIn,
+            outputMicrosPerMillion: pOut,
+          };
+          const optPrice: Array<[string, string]> = [
+            ["cacheReadMicrosPerMillion", priceCacheRead],
+            ["cacheWriteMicrosPerMillion", priceCacheWrite],
+            ["reasoningMicrosPerMillion", priceReasoning],
+            ["inputAudioMicrosPerMillion", priceInputAudio],
+            ["outputAudioMicrosPerMillion", priceOutputAudio],
+          ];
+          for (const [key, raw] of optPrice) {
+            if (raw.trim() === "") continue;
+            price[key] = parseMajorToMicros(raw);
+          }
+          updatedEntry.price = price;
+        } catch {
+          setError("Price values must be non-negative decimals (≤6 dp).");
+          return;
+        }
+      } else if (
+        priceCacheRead !== "" ||
+        priceCacheWrite !== "" ||
+        priceReasoning !== "" ||
+        priceInputAudio !== "" ||
+        priceOutputAudio !== ""
+      ) {
+        setError("Set price input/output before adding optional price rates.");
+        return;
+      }
+
+      setSubmitting(true);
+      setError(null);
+      try {
+        const updatedEntries = allEntries.map((e) =>
+          e.id === entry.id ? updatedEntry : e,
+        );
+        await patchJson(`/admin/models/${modelId}`, { entries: updatedEntries });
+        onSaved();
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Update failed.");
+      } finally {
+        setSubmitting(false);
+      }
+    },
+    [upstreamModelId, costInput, costOutput, costCacheRead, costCacheWrite, costReasoning, costInputAudio, costOutputAudio, priceInput, priceOutput, priceCacheRead, priceCacheWrite, priceReasoning, priceInputAudio, priceOutputAudio, active, entry, allEntries, modelId, onSaved],
+  );
+
+  return (
+    <form className="mt-2 flex flex-col gap-3 rounded-md border border-primary/30 bg-primary/5 p-4" onSubmit={submit}>
+      <SectionTitle>Edit entry overrides</SectionTitle>
+      {error ? (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      ) : null}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Field id="ee-up" label="Upstream model id">
+          <Input id="ee-up" type="text" value={upstreamModelId} onChange={(e) => setUpstreamModelId(e.target.value)} required disabled={submitting} />
+        </Field>
+      </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <Field id="ee-cin" label="Cost input ($/M)" optional>
+          <Input id="ee-cin" type="number" min={0} step="any" value={costInput} onChange={(e) => setCostInput(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-cout" label="Cost output ($/M)" optional>
+          <Input id="ee-cout" type="number" min={0} step="any" value={costOutput} onChange={(e) => setCostOutput(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-ccr" label="Cost cache read ($/M)" optional>
+          <Input id="ee-ccr" type="number" min={0} step="any" value={costCacheRead} placeholder="blank" onChange={(e) => setCostCacheRead(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-ccw" label="Cost cache write ($/M)" optional>
+          <Input id="ee-ccw" type="number" min={0} step="any" value={costCacheWrite} placeholder="blank" onChange={(e) => setCostCacheWrite(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-crs" label="Cost reasoning ($/M)" optional>
+          <Input id="ee-crs" type="number" min={0} step="any" value={costReasoning} placeholder="blank" onChange={(e) => setCostReasoning(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-cain" label="Cost audio in ($/M)" optional>
+          <Input id="ee-cain" type="number" min={0} step="any" value={costInputAudio} placeholder="blank" onChange={(e) => setCostInputAudio(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-caout" label="Cost audio out ($/M)" optional>
+          <Input id="ee-caout" type="number" min={0} step="any" value={costOutputAudio} placeholder="blank" onChange={(e) => setCostOutputAudio(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-pin" label="Price input ($/M)" optional>
+          <Input id="ee-pin" type="number" min={0} step="any" value={priceInput} onChange={(e) => setPriceInput(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-pout" label="Price output ($/M)" optional>
+          <Input id="ee-pout" type="number" min={0} step="any" value={priceOutput} onChange={(e) => setPriceOutput(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-pcr" label="Price cache read ($/M)" optional>
+          <Input id="ee-pcr" type="number" min={0} step="any" value={priceCacheRead} placeholder="blank" onChange={(e) => setPriceCacheRead(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-pcw" label="Price cache write ($/M)" optional>
+          <Input id="ee-pcw" type="number" min={0} step="any" value={priceCacheWrite} placeholder="blank" onChange={(e) => setPriceCacheWrite(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-prs" label="Price reasoning ($/M)" optional>
+          <Input id="ee-prs" type="number" min={0} step="any" value={priceReasoning} placeholder="blank" onChange={(e) => setPriceReasoning(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-pain" label="Price audio in ($/M)" optional>
+          <Input id="ee-pain" type="number" min={0} step="any" value={priceInputAudio} placeholder="blank" onChange={(e) => setPriceInputAudio(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+        <Field id="ee-paout" label="Price audio out ($/M)" optional>
+          <Input id="ee-paout" type="number" min={0} step="any" value={priceOutputAudio} placeholder="blank" onChange={(e) => setPriceOutputAudio(e.target.value)} onFocus={selectOnFocus} disabled={submitting} />
+        </Field>
+      </div>
+      <label className="inline-flex cursor-pointer items-center gap-1.5 text-sm">
+        <Checkbox checked={active} onCheckedChange={(v) => setActive(v === true)} disabled={submitting} />
+        Active in fallback chain
+      </label>
+      <div className="flex justify-end gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={onCancel} disabled={submitting}>Cancel</Button>
+        <Button type="submit" size="sm" disabled={submitting}>{submitting ? "Saving…" : "Save changes"}</Button>
       </div>
     </form>
   );
