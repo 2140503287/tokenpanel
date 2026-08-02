@@ -525,6 +525,18 @@ publicOpenAI.post("/v1/chat/completions", async (c) => {
           );
         }
       };
+      // SSE heartbeat: keeps the connection alive through proxies (Cloudflare,
+      // Caddy, nginx) during upstream silence (LLM thinking, slow generation).
+      // Comment lines are ignored by all conforming SSE clients.
+      const HEARTBEAT_INTERVAL_MS = 15_000;
+      const heartbeat = setInterval(() => {
+        if (clientDisconnected) return;
+        try {
+          controller.enqueue(encoder.encode(": ping\n\n"));
+        } catch {
+          clientDisconnected = true;
+        }
+      }, HEARTBEAT_INTERVAL_MS);
       try {
         for await (const event of session.iterate()) {
           if (clientDisconnected || abortSignal.aborted) {
@@ -638,6 +650,7 @@ publicOpenAI.post("/v1/chat/completions", async (c) => {
           enqueueAppError(err);
         }
       } finally {
+        clearInterval(heartbeat);
         abortSignal.removeEventListener("abort", onAbort);
         try {
           controller.close();

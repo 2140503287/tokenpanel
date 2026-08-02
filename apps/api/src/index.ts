@@ -191,6 +191,9 @@ console.log("mongodb ready");
 // Pass Bun server into Hono env so getConnInfo / client-IP can use requestIP.
 Bun.serve({
   port,
+  // Streaming API: upstream LLM responses can take minutes. Disable Bun's
+  // default 10s idle timeout so long-lived SSE connections aren't killed.
+  idleTimeout: 0,
   fetch(req, server) {
     return app.fetch(req, { server });
   },

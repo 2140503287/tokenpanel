@@ -529,6 +529,17 @@ publicAnthropic.post("/v1/messages", async (c) => {
           enqueueTerminalError("upstream_error", SAFE_MESSAGES.upstream_error);
         }
       };
+      // SSE heartbeat: keeps the connection alive through proxies during
+      // upstream silence. Comment lines are ignored by all SSE clients.
+      const HEARTBEAT_INTERVAL_MS = 15_000;
+      const heartbeat = setInterval(() => {
+        if (clientDisconnected) return;
+        try {
+          controller.enqueue(encoder.encode(": ping\n\n"));
+        } catch {
+          clientDisconnected = true;
+        }
+      }, HEARTBEAT_INTERVAL_MS);
       try {
         enqueue("message_start", {
           type: "message_start",
@@ -634,6 +645,7 @@ publicAnthropic.post("/v1/messages", async (c) => {
           enqueueAppError(err);
         }
       } finally {
+        clearInterval(heartbeat);
         abortSignal.removeEventListener("abort", onAbort);
         try {
           controller.close();
