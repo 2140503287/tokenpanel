@@ -219,6 +219,22 @@ function withSignal(
   return { ...request, signal };
 }
 
+/**
+ * Drop a client-supplied `reasoning` effort when the resolved model is not
+ * flagged as reasoning-capable. The OpenAI adapter forwards `reasoning_effort`
+ * verbatim upstream; non-reasoning OpenAI-compatible providers (DeepSeek,
+ * GLM, …) may reject the unknown parameter. Reasoning-capable models keep the
+ * effort untouched — the Anthropic adapter translates it into an extended
+ * thinking budget, and OpenAI-compatible adapters pass it through.
+ */
+export function gateReasoningForModel(
+  request: ChatRequest,
+  model: ModelDoc,
+): ChatRequest {
+  if (request.reasoning === undefined || model.reasoning) return request;
+  return { ...request, reasoning: undefined };
+}
+
 function isAbortError(err: unknown): boolean {
   if (err instanceof Error && err.name === "AbortError") return true;
   if (
@@ -250,7 +266,7 @@ export const completeGeneration = (
       params.reservedMicros ?? params.reservation?.reservedMicros ?? 0;
     const deps = params.deps ?? liveLoadProviderDeps();
     const signal = params.signal;
-    const request = withSignal(params.request, signal);
+    const request = gateReasoningForModel(withSignal(params.request, signal), params.model);
 
     const limitReservation = params.limitReservation ?? null;
 
@@ -400,7 +416,7 @@ export function openStreamGeneration(
     params.reservedMicros ?? params.reservation?.reservedMicros ?? 0;
   const limitReservation = params.limitReservation ?? null;
   const deps = params.deps ?? liveLoadProviderDeps();
-  const request = withSignal(params.request, params.signal);
+  const request = gateReasoningForModel(withSignal(params.request, params.signal), params.model);
 
   let lifecycle: StreamLifecycleState = initialStreamState();
   let finalized = false;
