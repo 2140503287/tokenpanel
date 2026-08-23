@@ -21,11 +21,7 @@ import { useAuth } from "./auth/AuthContext.tsx";
 import type { PanelPermission } from "./auth/AuthContext.tsx";
 
 function FullScreenLoader(): React.ReactElement {
-  return (
-    <div className="flex min-h-screen items-center justify-center text-muted-foreground">
-      Loading…
-    </div>
-  );
+  return <div className="flex min-h-screen items-center justify-center text-muted-foreground">Loading…</div>;
 }
 
 function RootRedirect(): React.ReactElement {
@@ -36,13 +32,7 @@ function RootRedirect(): React.ReactElement {
   return <Navigate to="/" replace />;
 }
 
-function Guarded({
-  permission,
-  page,
-}: {
-  permission: PanelPermission | null;
-  page: React.ReactElement;
-}): React.ReactElement {
+function Guarded({ permission, page }: { permission: PanelPermission | null; page: React.ReactElement }): React.ReactElement {
   return <RequirePermission permission={permission}>{page}</RequirePermission>;
 }
 
@@ -51,6 +41,7 @@ export default function App(): React.ReactElement {
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/signup" element={<SignupPage />} />
+      <Route path="/pay" element={<PaymentPage />} />
       <Route path="/root" element={<RootRedirect />} />
       <Route
         path="/"
