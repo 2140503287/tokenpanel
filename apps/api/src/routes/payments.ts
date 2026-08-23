@@ -12,7 +12,6 @@ import { DEFAULT_RECHARGE_PACKAGES } from "../billing/recharge-packages.ts";
 
 const app = new Hono<{ Variables: PublicAuthVariables }>();
 const providers: Record<string, PaymentProvider> = { wechat: new WeChatNativeProvider(), alipay: new AlipayProvider() };
-
 function orderCollection(db: Awaited<ReturnType<typeof resolveMongo>>["rawDb"]) { return db.collection("payment_orders"); }
 function packageById(id: string) { return DEFAULT_RECHARGE_PACKAGES.find((p) => p.id === id); }
 
@@ -30,7 +29,7 @@ app.post("/orders", requirePublicPrincipal, async (c) => {
   const { rawDb } = await resolveMongo();
   const orders = orderCollection(rawDb);
   await orders.createIndex({ orderId: 1 }, { unique: true });
-  await orders.insertOne({ orderId, organizationId: principal.orgId, customerId: principal.customer._id, packageId: pkg.id, amountFen: pkg.amountFen, tokenGrant: pkg.tokenGrant, provider: provider.name, status: "PENDING", createdAt: new Date() });
+  await orders.insertOne({ orderId, organizationId: principal.orgId, customerId: principal.customer._id, packageId: pkg.id, amountFen: pkg.amountFen, tokenGrant: pkg.tokenGrant.toString(), provider: provider.name, status: "PENDING", createdAt: new Date() });
   try {
     const payment = await provider.createPayment(order);
     await orders.updateOne({ orderId }, { $set: { qrCode: payment.qrCode ?? null, payUrl: payment.payUrl ?? null, providerRaw: payment.raw ?? null, updatedAt: new Date() } });
@@ -76,7 +75,7 @@ app.get("/orders/:orderId", requirePublicPrincipal, async (c) => {
   const { rawDb } = await resolveMongo();
   const order = await orderCollection(rawDb).findOne({ orderId: c.req.param("orderId"), customerId: principal.customer._id }, { projection: { _id: 0, providerRaw: 0, creditError: 0 } });
   if (!order) return c.json({ error: "not_found" }, 404);
-  return c.json({ ...order, tokenGrant: typeof order.tokenGrant === "bigint" ? order.tokenGrant.toString() : order.tokenGrant });
+  return c.json(order);
 });
 
 export default app;
