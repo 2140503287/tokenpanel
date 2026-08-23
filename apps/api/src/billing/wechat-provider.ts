@@ -1,14 +1,10 @@
-import { createSign, createVerify } from "node:crypto";
+import { createDecipheriv, createSign, createVerify } from "node:crypto";
 import { loadPaymentConfig } from "./payment-config.ts";
-import { assertPaidAmount, type PaymentProvider, type RechargeOrder, type PaymentCreateResult, type PaymentNotifyResult } from "./payment-provider.ts";
+import { type PaymentProvider, type RechargeOrder, type PaymentCreateResult, type PaymentNotifyResult } from "./payment-provider.ts";
 
 function pem(value?: string): string {
   if (!value) throw new Error("missing WeChat Pay key configuration");
   return value.replace(/\\n/g, "\n");
-}
-
-function sha256(input: string): string {
-  return new Bun.CryptoHasher("sha256").update(input).digest("hex");
 }
 
 export class WeChatNativeProvider implements PaymentProvider {
@@ -28,9 +24,7 @@ export class WeChatNativeProvider implements PaymentProvider {
   }
 
   async createPayment(order: RechargeOrder): Promise<PaymentCreateResult> {
-    if (!this.cfg.enabled || !this.cfg.appId || !this.cfg.merchantId || !this.cfg.merchantSerialNo) {
-      throw new Error("WeChat Pay is not configured");
-    }
+    if (!this.cfg.enabled || !this.cfg.appId || !this.cfg.merchantId || !this.cfg.merchantSerialNo) throw new Error("WeChat Pay is not configured");
     const path = "/v3/pay/transactions/native";
     const body = JSON.stringify({
       appid: this.cfg.appId,
@@ -42,11 +36,7 @@ export class WeChatNativeProvider implements PaymentProvider {
     });
     const res = await fetch(`https://api.mch.weixin.qq.com${path}`, {
       method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: this.authorization("POST", path, body),
-      },
+      headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: this.authorization("POST", path, body) },
       body,
     });
     const json = await res.json() as { code_url?: string; code?: string; message?: string };
@@ -58,28 +48,20 @@ export class WeChatNativeProvider implements PaymentProvider {
     const signature = input.headers["wechatpay-signature"];
     const timestamp = input.headers["wechatpay-timestamp"];
     const nonce = input.headers["wechatpay-nonce"];
-    if (!signature || !timestamp || !nonce || !this.cfg.platformPublicKeyPem) return { verified: false, success: false };
-    const message = `${timestamp}\n${nonce}\n${input.body}\n`;
+    if (!signature || !timestamp || !nonce || !this.cfg.platformPublicKeyPem || !this.cfg.apiV3Key) return { verified: false, success: false };
     const verifier = createVerify("RSA-SHA256");
-    verifier.update(message);
+    verifier.update(`${timestamp}\n${nonce}\n${input.body}\n`);
     verifier.end();
     if (!verifier.verify(pem(this.cfg.platformPublicKeyPem), signature, "base64")) return { verified: false, success: false };
     const envelope = JSON.parse(input.body) as { resource?: { algorithm?: string; ciphertext?: string; nonce?: string; associated_data?: string } };
     const r = envelope.resource;
-    if (!r || r.algorithm !== "AEAD_AES_256_GCM" || !r.ciphertext || !r.nonce || !this.cfg.apiV3Key) return { verified: false, success: false };
-    const key = Buffer.from(this.cfg.apiV3Key, "utf8");
-    const decipher = new Bun.CryptoHasher("sha256");
-    void decipher;
-    const crypto = await import("node:crypto");
-    const d = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(r.nonce, "utf8"));
-    d.setAAD(Buffer.from(r.associated_data ?? "", "utf8"));
+    if (!r || r.algorithm !== "AEAD_AES_256_GCM" || !r.ciphertext || !r.nonce) return { verified: false, success: false };
+    const decipher = createDecipheriv("aes-256-gcm", Buffer.from(this.cfg.apiV3Key, "utf8"), Buffer.from(r.nonce, "utf8"));
+    decipher.setAAD(Buffer.from(r.associated_data ?? "", "utf8"));
     const encrypted = Buffer.from(r.ciphertext, "base64");
-    const tag = encrypted.subarray(encrypted.length - 16);
-    d.setAuthTag(tag);
-    const plain = Buffer.concat([d.update(encrypted.subarray(0, -16)), d.final()]).toString("utf8");
+    decipher.setAuthTag(encrypted.subarray(encrypted.length - 16));
+    const plain = Buffer.concat([decipher.update(encrypted.subarray(0, -16)), decipher.final()]).toString("utf8");
     const data = JSON.parse(plain) as { out_trade_no: string; transaction_id?: string; trade_state?: string; amount?: { total?: number } };
     return { verified: true, orderId: data.out_trade_no, providerTradeId: data.transaction_id, paidAmountFen: data.amount?.total, success: data.trade_state === "SUCCESS", raw: data };
   }
 }
-
-void sha256;
