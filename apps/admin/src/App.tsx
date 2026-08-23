@@ -16,6 +16,7 @@ import ManagementKeysPage from "./pages/ManagementKeysPage.tsx";
 import PlaygroundPage from "./pages/PlaygroundPage.tsx";
 import SettingsPage from "./pages/SettingsPage.tsx";
 import OrganizationsPage from "./pages/OrganizationsPage.tsx";
+import PaymentPage from "./pages/PaymentPage.tsx";
 import { useAuth } from "./auth/AuthContext.tsx";
 import type { PanelPermission } from "./auth/AuthContext.tsx";
 
@@ -29,13 +30,7 @@ function FullScreenLoader(): React.ReactElement {
 
 function RootRedirect(): React.ReactElement {
   const { user, loading, needsSetup } = useAuth();
-
-  // loading true OR status fetch failed (needsSetup === null): wait, don't
-  // route yet — otherwise a transient network/CORS error would bounce us to
-  // /login and hide the first-run signup flow.
-  if (loading || needsSetup === null) {
-    return <FullScreenLoader />;
-  }
+  if (loading || needsSetup === null) return <FullScreenLoader />;
   if (needsSetup && !user) return <Navigate to="/signup" replace />;
   if (!user) return <Navigate to="/login" replace />;
   return <Navigate to="/" replace />;
@@ -68,33 +63,15 @@ export default function App(): React.ReactElement {
         }
       >
         <Route index element={<Guarded permission="dashboard:read" page={<DashboardPage />} />} />
-        <Route
-          path="providers"
-          element={<Guarded permission="providers:read" page={<ProvidersPage />} />}
-        />
+        <Route path="providers" element={<Guarded permission="providers:read" page={<ProvidersPage />} />} />
         <Route path="models" element={<Guarded permission="models:read" page={<ModelsPage />} />} />
-        <Route
-          path="customers"
-          element={<Guarded permission="customers:read" page={<CustomersPage />} />}
-        />
+        <Route path="customers" element={<Guarded permission="customers:read" page={<CustomersPage />} />} />
         <Route path="plans" element={<Guarded permission="plans:read" page={<PlansPage />} />} />
-        <Route
-          path="playground"
-          element={<Guarded permission="playground:write" page={<PlaygroundPage />} />}
-        />
-        <Route
-          path="analytics"
-          element={<Guarded permission="usage:read" page={<AnalyticsPage />} />}
-        />
-        <Route
-          path="api-keys"
-          element={<Guarded permission="customer_keys:read" page={<ApiKeysPage />} />}
-        />
-        <Route
-          path="management-keys"
-          element={<Guarded permission="management_keys:read" page={<ManagementKeysPage />} />}
-        />
-        {/* Orgs + settings: any authenticated member (no panel atom). */}
+        <Route path="payment" element={<Guarded permission={null} page={<PaymentPage />} />} />
+        <Route path="playground" element={<Guarded permission="playground:write" page={<PlaygroundPage />} />} />
+        <Route path="analytics" element={<Guarded permission="usage:read" page={<AnalyticsPage />} />} />
+        <Route path="api-keys" element={<Guarded permission="customer_keys:read" page={<ApiKeysPage />} />} />
+        <Route path="management-keys" element={<Guarded permission="management_keys:read" page={<ManagementKeysPage />} />} />
         <Route path="organizations" element={<Guarded permission={null} page={<OrganizationsPage />} />} />
         <Route path="settings" element={<Guarded permission={null} page={<SettingsPage />} />} />
       </Route>
